@@ -1,0 +1,22 @@
+{
+    "af178691-9576-4f60-a357-9895bf3b403f": {
+        "user_id": 7658738825,
+        "item_id": 11,
+        "payment_method": "Crypto",
+        "status": "waiting_payment",
+        "created_at": "2025-09-28T22:37:03.439977",
+        "number": null,
+        "code": null,
+        "invoice_id": 34466415
+    },
+    "f694ba39-0473-4e56-8251-1932f6db4bd7": {
+        "user_id": 7769864830,
+        "item_id": 2,
+        "payment_method": "Crypto",
+        "status": "waiting_payment",
+        "created_at": "2025-09-28T22:37:17.284900",
+        "number": null,
+        "code": null,
+        "invoice_id": 34466429
+    }
+}
