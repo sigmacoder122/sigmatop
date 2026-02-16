@@ -2,8 +2,32 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardBut
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.database.requests import get_catigories, get_item
 from aiogram.types import LabeledPrice, Message
+def main_reply_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🎁 Бесплатный аккаунт")]  # <--- ВОТ ЭТА КНОПКА
+        ],
+        resize_keyboard=True, # Делает кнопки аккуратными
+        input_field_placeholder="Выберите пункт меню..."
+    )
+def main_menu():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📂 Категории", callback_data="catalog")],
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
+        # --- ВОТ ТВОЯ КНОПКА ---
+        [InlineKeyboardButton(text="🎁 ПОЛУЧИТЬ АККАУНТ БЕСПЛАТНО", callback_data="gamble_select_item")],
+        # -----------------------
+        [InlineKeyboardButton(text="ℹ️ Поддержка", callback_data="support")]
+    ])
+    return keyboard
 
-
+# Если у тебя Reply-меню (кнопки внизу экрана, где ввод текста):
+def reply_main_menu():
+    keyboard = ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="📂 Категории"), KeyboardButton(text="👤 Профиль")],
+        [KeyboardButton(text="🎁 Получить аккаунт бесплатно")] # Обрабатываем по тексту
+    ], resize_keyboard=True)
+    return keyboard
 main = ReplyKeyboardMarkup(keyboard=[
     [KeyboardButton(text = 'Профиль')],
 ], resize_keyboard=True, input_field_placeholder='Выбери')
@@ -49,82 +73,82 @@ async def catigories():
             text=category.name,
             callback_data=f'category_{category.id}'
         ))
-    keyboard.row(InlineKeyboardButton(text='Назад', callback_data='main'))
+    keyboard.row(InlineKeyboardButton(text='↩️ Назад', callback_data='main'))
     return keyboard.adjust(2).as_markup()
 
 
 from app.database.requests import get_items_by_category, get_total_items_count
 
 
-async def items(category_id, page=0):
+async def items(category_id, page=0, sort_mode="asc"):
     items_per_page = 10
     offset = page * items_per_page
-    all_items = await get_items_by_category(category_id, items_per_page, offset)
+
+    # Теперь передаем 4 аргумента, как и просил Python в прошлой ошибке
+    all_items = await get_items_by_category(category_id, items_per_page, offset, sort_mode)
     total_items = await get_total_items_count(category_id)
-    total_pages = (total_items + items_per_page - 1) // items_per_page
+    total_pages = max((total_items + items_per_page - 1) // items_per_page, 1)
 
     keyboard = InlineKeyboardBuilder()
 
-    # Добавляем товары по 3 в ряд
-    for i, item in enumerate(all_items):
+    for item in all_items:
         keyboard.add(InlineKeyboardButton(
-            text=f"{item.name} ({item.price} RUB)",
+            text=f"{item.name}•{int(item.price)}₽",
             callback_data=f'item_{item.id}'
         ))
 
-    # Добавляем кнопки навигации
-    navigation_buttons = []
-    if page > 0:
-        navigation_buttons.append(
-            InlineKeyboardButton(
-                text="⬅️ Назад",
-                callback_data=f'items_{category_id}_{page - 1}'
-            )
-        )
+    keyboard.adjust(2)
 
-    # Индикатор страницы
-    navigation_buttons.append(
-        InlineKeyboardButton(
-            text=f"{page + 1}/{total_pages}",
-            callback_data="ignore"
-        )
-    )
-
-    if page < total_pages - 1:
-        navigation_buttons.append(
-            InlineKeyboardButton(
-                text="Вперед ➡️",
-                callback_data=f'items_{category_id}_{page + 1}'
-            )
-        )
-
-    if navigation_buttons:
-        keyboard.row(*navigation_buttons)
-
+    # Кнопка сортировки
+    sort_icon = "⬇️" if sort_mode == "asc" else "⬆️"
+    next_sort = "desc" if sort_mode == "asc" else "asc"
     keyboard.row(InlineKeyboardButton(
-        text='Назад к категориям',
-        callback_data='buyacc'
+        text=f"Цена {sort_icon}",
+        callback_data=f"items_{category_id}_{page}_{next_sort}"
     ))
 
-    return keyboard.adjust(2).as_markup()
+    # Навигация
+    nav_row = []
+    # Если страницы нет, шлем 'ignore_1', чтобы Telegram не ругался на "no modification"
+    if page > 0:
+        nav_row.append(InlineKeyboardButton(text="‹", callback_data=f'items_{category_id}_{page - 1}_{sort_mode}'))
+    else:
+        nav_row.append(InlineKeyboardButton(text="·", callback_data="ignore_prev"))
+
+    nav_row.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="ignore_page"))
+
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton(text="›", callback_data=f'items_{category_id}_{page + 1}_{sort_mode}'))
+    else:
+        nav_row.append(InlineKeyboardButton(text="·", callback_data="ignore_next"))
+
+    keyboard.row(*nav_row)
+    keyboard.row(InlineKeyboardButton(text='↩️ Назад', callback_data='buyacc'))
+
+    return keyboard.as_markup()
 
 async def payment_methods(item_id, category_id):
     keyboard = InlineKeyboardBuilder()
     keyboard.add(
         InlineKeyboardButton(text='Telegram Stars 🌟', callback_data=f'pay_stars_{item_id}'),
-        InlineKeyboardButton(text='Crypto Bot/USDT', callback_data=f'pay_crypto_{item_id}'),
-        InlineKeyboardButton(text='Карта РФ 💳', callback_data=f'pay_card_{item_id}')
+        InlineKeyboardButton(text='Crypto Bot/USDT', callback_data=f'pay_crypto_{item_id}')
     )
     keyboard.row(InlineKeyboardButton(
-        text='Назад к товарам',
+        text='Назад к товарам↩️ ',
         callback_data=f'category_{category_id}'
     ))
     return keyboard.adjust(1).as_markup()
 
-def stars_payment_keyboard():
+# В файле keyboards.py (или где у тебя этот метод)
+def stars_payment_keyboard(item_id, category_id):
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Оплатить", pay=True)
-    builder.button(text="❌ Отмена", callback_data="cancel_stars_payment")
+    # Кнопка для оплаты (обязательна для инвойса)
+    builder.row(InlineKeyboardButton(text="Оплатить ⭐️", pay=True))
+    # Кнопка возврата
+    builder.row(InlineKeyboardButton(
+        text="❌ Отменить и назад",
+        callback_data=f"cancel_pay_{item_id}_{category_id}"
+    ))
     return builder.as_markup()
 
 async def crypto_payment_keyboard(pay_url: str):

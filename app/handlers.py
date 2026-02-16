@@ -1,22 +1,18 @@
 from aiogram import F, Router
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, CallbackQuery, LabeledPrice, PreCheckoutQuery
+from aiogram.types import Message, CallbackQuery
 import app.keyboards as kb
 from aiogram.fsm.context import FSMContext
-import app.database.requests as rq
+from typing import Union
+from aiogram.types import PreCheckoutQuery
 from aiogram import types
 import requests
-from aiogram.fsm.state import State, StatesGroup
 import aiohttp
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from datetime import datetime, timedelta
 from config import crypto_bot_token
 import logging
 from aiogram import Bot
-import re
 import os
-import json
-from aiogram.utils.markdown import bold
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import uuid
 from typing import Dict, Any
@@ -33,7 +29,10 @@ class InfoStates(StatesGroup):
 # Добавляем состояние для капчи
 class CaptchaStates(StatesGroup):
     waiting_captcha = State()
-
+class StarGameStates(StatesGroup):
+    selecting_item = State()
+    choosing_mode = State()
+    placing_bet = State()
 # Список эмодзи для капчи
 EMOJIS = ["😀", "😂", "😍", "🥰", "😎", "🤩", "🥳", "😭", "😡", "🤯", "🥶", "🤢", "👻", "💩", "👾"]
 router = Router()
@@ -62,43 +61,201 @@ async def cancel_payment(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "main")
 async def main_menu(callback: CallbackQuery):
-    await callback.answer()
-    new_media = types.InputMediaPhoto(
-        media="AgACAgQAAxkBAAMEaJvAKelwUJ3FyF2K28N4LVSPrpcAAiTKMRuGWOFQ-eq_9D5tqiQBAAMCAAN5AAM2BA",
-        caption='🔐 Добро пожаловать в магазин Telegram-аккаунтов!\n Канал бота: @aIfanews'
-    )
-    await callback.bot.edit_message_media(
-        chat_id=callback.message.chat.id,
-        message_id=callback.message.message_id,
-        media=new_media,
-        reply_markup=kb.settings()  # Добавьте скобки здесь
-    )
+    try:
+        # Форматируем текст в новом стиле
+        main_text = (
+            "<b>🔐 добро пожаловать!</b>\n"
+            "<blockquote>Лучшие Telegram-аккаунты для ваших целей.\n"
+            "Выбирайте нужную категорию в меню ниже.</blockquote>\n\n"
+            "<b>📢 Новости:</b>@eelge\n"
+            "<b>🛡 Гарантия качества:</b> 24/7"
+        )
 
+        new_media = types.InputMediaPhoto(
+            media="AgACAgQAAxkBAAIReGmBBY8-2iXa7erdW74PztiMWiRTAAJTEGsb3gYIUEricwettX1qAQADAgADeQADOAQ",
+            caption=main_text,
+            parse_mode="HTML"
+        )
+
+        # Используем edit_message_media через callback.message — это лаконичнее
+        await callback.message.edit_media(
+            media=new_media,
+            reply_markup=kb.settings()
+        )
+        await callback.answer()
+
+    except Exception as e:
+        logging.error(f"Main menu error: {str(e)}")
+        # Если сообщение не изменилось, просто гасим уведомление
+        await callback.answer()
+
+
+# Инициализируем пустое множество для хранения ID проверенных пользователей
+verified_users = set()
+class BonusStates(StatesGroup):
+    waiting_for_bonus = State()
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
-    # Сбрасываем текущее состояние
-    await state.clear()
-    correct_emoji = random.choice(EMOJIS)
-    # Создаем список из 6 уникальных эмодзи (1 правильный + 5 случайных)
-    emojis = [correct_emoji] + random.sample([e for e in EMOJIS if e != correct_emoji], 5)
-    random.shuffle(emojis)  # Перемешиваем
+    # 1. Проверяем, есть ли пользователь в списке проверенных
+    if message.from_user.id in verified_users:
+        await state.clear()
+        return await show_main_menu(message)
 
-    # Сохраняем правильный ответ в состоянии
+    await state.clear()
+
+    correct_emoji = random.choice(EMOJIS)
+    other_emojis = random.sample([e for e in EMOJIS if e != correct_emoji], 5)
+    all_emojis = [correct_emoji] + other_emojis
+    random.shuffle(all_emojis)
+
     await state.update_data(correct_emoji=correct_emoji)
     await state.set_state(CaptchaStates.waiting_captcha)
 
-    # Регистрируем/обновляем пользователя
-    await rq.set_user(message.from_user.id)
-
-
-    # Отправляем приветственное сообщение
-    await message.answer_photo(
-        photo="AgACAgQAAxkBAAMEaJvAKelwUJ3FyF2K28N4LVSPrpcAAiTKMRuGWOFQ-eq_9D5tqiQBAAMCAAN5AAM2BA",
-        caption='🔐 Добро пожаловать в магазин Telegram-аккаунтов!',
-        reply_markup=kb.settings()
+    captcha_text = (
+        "<b>🛡 ВЕРИФИКАЦИЯ</b>\n\n"
+        "<blockquote>Для доступа к магазину подтвердите, что вы человек.</blockquote>\n"
+        f"🎯 <b>НАЖМИТЕ НА:</b> {correct_emoji}"
     )
 
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=e, callback_data=f"check_{e}") for e in all_emojis]
+    ])
+
+    await message.answer_photo(
+        photo="AgACAgQAAxkBAAIReGmBBY8-2iXa7erdW74PztiMWiRTAAJTEGsb3gYIUEricwettX1qAQADAgADeQADOAQ",
+        caption=captcha_text,
+        reply_markup=keyboard
+    )
+
+
+@router.callback_query(CaptchaStates.waiting_captcha, F.data.startswith("check_"))
+async def process_captcha(callback: CallbackQuery, state: FSMContext):
+    user_data = await state.get_data()
+    correct_emoji = user_data.get("correct_emoji")
+    selected_emoji = callback.data.split("_")[1]
+
+    if selected_emoji == correct_emoji:
+        # 1. Сразу убираем загрузку и мигание
+        await callback.answer("Успешно!")
+
+        # 2. Добавляем в белый список
+        verified_users.add(callback.from_user.id)
+
+        # 3. Отправляем нижнюю клавиатуру
+        await callback.message.answer(
+            text="✅ <b>Верификация успешно пройдена!</b>\nМеню доступно внизу.",
+            reply_markup=kb.main_reply_keyboard(),
+            parse_mode="HTML"
+        )
+
+        # 4. Переходим к бонусной игре
+        await state.set_state(BonusStates.waiting_for_bonus)
+
+        # Генерируем сетку 3х3
+        keyboard = []
+        for i in range(3):
+            row = []
+            for j in range(3):
+                row.append(InlineKeyboardButton(text="🎁", callback_data=f"bonus_{i * 3 + j}"))
+            keyboard.append(row)
+
+        bonus_kb = InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+        bonus_text = (
+            "<b>🎉 СЮРПРИЗ!</b>\n\n"
+            "<blockquote>В честь знакомства мы дарим вам <b>бонус</b>!\n"
+            "Выберите один из квадратов, чтобы получить приз на баланс:</blockquote>"
+        )
+
+        # 5. Меняем сообщение
+        await callback.message.edit_caption(
+            caption=bonus_text,
+            reply_markup=bonus_kb,
+            parse_mode="HTML"
+        )
+    else:
+        # Для неверного ответа answer уже есть, он уберет загрузку и покажет алерт
+        await callback.answer("⚠️ Неверно! Попробуйте еще раз.", show_alert=True)
+
+
+# Обрабатываем текст кнопки "🎁 Испытать удачу"
+@router.message(F.text == "🎁 Бесплатный аккаунт")
+async def gamble_start(message: Message, state: FSMContext):
+    # Твой код запуска игры (который мы писали выше)
+    # ...
+    items = await rq.get_items_by_category_paginated(category_id=1, limit=5)
+
+    if not items:
+        await message.answer("Товаров пока нет.")
+        return
+
+    keyboard = []
+    for item in items:
+        keyboard.append([InlineKeyboardButton(
+            text=f"{item.name} | 💎 {int(item.price)} руб",
+            callback_data=f"gamble_item_{item.id}"
+        )])
+
+    text = "<b>🎰 ХАЛЯВА / РОЗЫГРЫШ</b>\nВыберите товар:"
+
+    await message.answer_photo(
+        photo="AgACAgQAAxkBAAIRhmmBCKVgYQUdGJR1w487TY2Ow5pHAAJsEGsb3gYIULDY1Wk8kLn4AQADAgADeAADOAQ",
+        caption=text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        parse_mode="HTML"
+    )
+    await state.set_state(StarGameStates.selecting_item)
+@router.callback_query(BonusStates.waiting_for_bonus, F.data.startswith("bonus_"))
+async def get_bonus_result(callback: CallbackQuery, state: FSMContext):
+    # Список возможных призов
+    prizes = [
+        "💰 30 RUB на баланс",
+        "🎫 Скидка 10% на первый заказ",
+        "🔥 Скидка 5% на любой товар",
+        "💸 Кешбэк 15% на следующую покупку",
+        "💰 15 RUB на баланс",
+        "📦 Бесплатный тестовый аккаунт после покупки первого",
+        "🍀 Удача! Скидка 20%"
+    ]
+
+    # Выбираем случайный приз
+    won_prize = random.choice(prizes)
+
+    await state.clear()
+    await callback.answer(f"🎁 Вы выиграли: {won_prize}", show_alert=True)
+
+    # Итоговый текст после выигрыша
+    main_text = (
+        f"<b>🔐 ГЛАВНОЕ МЕНЮ</b>\n\n"
+        f"🎁 <b>Ваш бонус:</b> {won_prize}\n"
+        "<blockquote>Лучшие Telegram-аккаунты для ваших целей.\n"
+        "Выбирайте нужную категорию в меню ниже.</blockquote>\n\n"
+        "<b>📢 Новости:</b> @eelge"
+    )
+
+    # Переходим в главное меню
+    await callback.message.edit_caption(
+        caption=main_text,
+        reply_markup=kb.settings(),
+        parse_mode="HTML"
+    )
+
+
+# Вспомогательная функция для показа меню (чтобы не дублировать код в Start)
+async def show_main_menu(message: Message):
+    main_text = (
+        "<b>🔐 ДОБРО ПОЖАЛОВАТЬ</b>\n\n"
+        "<blockquote>Лучшие Telegram-аккаунты для ваших целей.\n"
+        "Выбирайте нужную категорию в меню ниже.</blockquote>\n\n"
+        "<b>📢 Новости:</b> @eelge"
+    )
+
+    await message.answer_photo(
+        photo="AgACAgQAAxkBAAIReGmBBY8-2iXa7erdW74PztiMWiRTAAJTEGsb3gYIUEricwettX1qAQADAgADeQADOAQ",
+        caption=main_text,
+        reply_markup=kb.settings()
+    )
 @router.callback_query(F.data == "send_start_command")
 async def send_start_command(callback: CallbackQuery):
     # Создаем искусственное сообщение с командой /start
@@ -151,24 +308,28 @@ async def check_subscription(callback: CallbackQuery, bot: Bot):
         logging.error(f"Subscription check error: {e}")
         await callback.answer("⚠️ Ошибка проверки подписки, попробуйте позже", show_alert=True)
 
+
 @router.callback_query(F.data == 'buyacc')
 async def buy_account(callback: CallbackQuery):
     await callback.answer()
-    # Получаем список категорий из БД
-    categories = await rq.get_catigories()
 
-    # Создаем медиа-объект с фото
-    new_media = types.InputMediaPhoto(
-        media="AgACAgQAAxkBAAMGaJvAZVJl0uPuo4MnZwOMNL9VJIQAAubKMRvHC-BQt7_NPHm8ypEBAAMCAAN5AAM2BA",
-        caption="🌐Выберите тип аккаунта:"
+    # Форматируем текст с использованием HTML-тегов
+    # 🛒 - эмодзи в заголовке добавляет акцент
+    # <blockquote> - создает стильную вертикальную черту слева
+    caption_text = (
+        "<b>🛒 КАТАЛОГ ТОВАРОВ</b>\n\n"
+        "<blockquote>Выберите интересующую категорию аккаунтов из списка ниже:</blockquote>"
     )
 
-    # Редактируем сообщение с новой клавиатурой
-    await callback.bot.edit_message_media(
-        chat_id=callback.message.chat.id,
-        message_id=callback.message.message_id,
+    new_media = types.InputMediaPhoto(
+        media="AgACAgQAAxkBAAIRgGmBByXL43m-mbTb4IqPfsKQGLZTAAJWEGsb3gYIUI2k2p5oBI0PAQADAgADeAADOAQ",
+        caption=caption_text,
+        parse_mode="HTML"  # Убедитесь, что parse_mode указан, если он не стоит по умолчанию
+    )
+
+    await callback.message.edit_media(
         media=new_media,
-        reply_markup=await kb.catigories()  # Используем клавиатуру категорий
+        reply_markup=await kb.catigories()
     )
 
 
@@ -179,7 +340,7 @@ async def show_category_items(callback: CallbackQuery):
     items = await rq.get_item(category_id)
 
     new_media = types.InputMediaPhoto(
-        media="AgACAgQAAxkBAAMIaJvAg9fcyDTi1JYZZU-2xrcc2IgAAujKMRvHC-BQ3WBtyqsmTucBAAMCAAN5AAM2BA",
+        media="AgACAgQAAxkBAAIRgmmBB9az2LR3mZzyyLrqvt1EKrLXAAJrEGsb3gYIUEPJvAPCt0XpAQADAgADeAADOAQ",
         caption="🌏Выберите страну:"
     )
 
@@ -212,14 +373,23 @@ async def show_category_items(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("items_"))
+from aiogram.exceptions import TelegramBadRequest
+from contextlib import suppress
+
+
+@router.callback_query(F.data.startswith('items_'))
 async def items_pagination(callback: CallbackQuery):
     data = callback.data.split('_')
     category_id = int(data[1])
     page = int(data[2])
+    sort_mode = data[3] if len(data) > 3 else "asc"
 
-    keyboard = await kb.items(category_id, page)
-    await callback.message.edit_reply_markup(reply_markup=keyboard)
+    keyboard = await kb.items(category_id, page, sort_mode)
+
+    # Используем suppress, чтобы бот не падал при "пустых" обновлениях
+    with suppress(TelegramBadRequest):
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+
     await callback.answer()
 
 
@@ -236,18 +406,23 @@ async def show_item(callback: CallbackQuery):
         await callback.answer("Товар не найден!")
         return
 
-
     category_id = item_data.category
     category_name = await rq.get_category_name(category_id)
 
+    # Форматируем текст с использованием жирного шрифта и блока цитаты
+    caption_text = (
+        "<b>💈 ИНФОРМАЦИЯ ОБ АККАУНТЕ</b>\n"
+        f"<blockquote><b>🏳️ Страна:</b> {item_data.name}\n"
+        f"<b>📡 Оператор:</b> любой\n"
+        f"<b>💵 Цена:</b> {item_data.price} RUB</blockquote>\n"
+        "➖➖➖➖➖➖➖➖➖➖\n"
+        "<b>💳 Выберите способ оплаты:</b>"
+    )
+
     new_media = types.InputMediaPhoto(
-        media="AgACAgQAAxkBAAMMaJvBVw5xMUj1oc6kPPaHRIjnzhsAAm3LMRtzVOBQqtd_8MzFFMQBAAMCAAN5AAM2BA",
-        caption='💈Информация об аккаунте:'
-                f"Страна:🏷 {item_data.name}\n"
-                "Оператор: любой\n"
-                f"💵 Цена: {item_data.price} RUB\n"
-                f"➖➖➖➖➖➖➖➖➖➖\n"
-                f"Выберите способ оплаты:"
+        media="AgACAgQAAxkBAAIRhmmBCKVgYQUdGJR1w487TY2Ow5pHAAJsEGsb3gYIULDY1Wk8kLn4AQADAgADeAADOAQ",
+        caption=caption_text,
+        parse_mode="HTML" # Убедись, что parse_mode указан, чтобы теги работали
     )
 
     await callback.bot.edit_message_media(
@@ -259,32 +434,248 @@ async def show_item(callback: CallbackQuery):
     await callback.answer()
 
 
+# --- 1. НАЖАТИЕ НА КНОПКУ "ПОЛУЧИТЬ БЕСПЛАТНО" ---
+# Если используешь Inline кнопку:
+@router.callback_query(F.data == "gamble_select_item")
+# Если используешь Reply кнопку (внизу экрана):
+# @router.message(F.text == "🎁 Получить аккаунт бесплатно")
+async def gamble_start(event: Union[CallbackQuery, Message], state: FSMContext):
+    # Получаем товары (например, 5 штук из первой категории)
+    # Можно сделать выборку рандомных товаров: items = await rq.get_random_items(5)
+    items = await rq.get_items_by_category_paginated(category_id=1, limit=5)
+
+    if not items:
+        # Универсальный ответ и для callback и для message
+        if isinstance(event, CallbackQuery):
+            await event.answer("Товаров нет", show_alert=True)
+        else:
+            await event.answer("Товаров нет")
+        return
+
+    # Генерируем список товаров для игры
+    keyboard = []
+    for item in items:
+        # Кнопка для каждого товара
+        keyboard.append([InlineKeyboardButton(
+            text=f"{item.name} | 💎 {int(item.price)} руб",
+            callback_data=f"gamble_item_{item.id}"
+        )])
+
+    # Кнопка назад
+    keyboard.append([InlineKeyboardButton(text="🔙 В меню", callback_data="main")])
+
+    text = (
+        "<b>🎰 ХАЛЯВА / РОЗЫГРЫШ</b>\n\n"
+        "<blockquote>Выберите товар, который хотите забрать почти даром.\n"
+        "Испытайте удачу за Telegram Stars!</blockquote>\n\n"
+        "👇 <b>На какой товар играем?</b>"
+    )
+
+    # Отправляем ответ (универсально для Call/Message)
+    if isinstance(event, CallbackQuery):
+        await event.message.edit_media(
+            media=types.InputMediaPhoto(
+                media="AgACAgQAAxkBAAIRhmmBCKVgYQUdGJR1w487TY2Ow5pHAAJsEGsb3gYIULDY1Wk8kLn4AQADAgADeAADOAQ",
+                # Твоя картинка "Казино"
+                caption=text,
+                parse_mode="HTML"
+            ),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+        )
+    else:
+        await event.answer_photo(
+            photo="AgACAgQAAxkBAAIRhmmBCKVgYQUdGJR1w487TY2Ow5pHAAJsEGsb3gYIULDY1Wk8kLn4AQADAgADeAADOAQ",
+            caption=text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+            parse_mode="HTML"
+        )
+
+    await state.set_state(StarGameStates.selecting_item)
+
+
+# --- 2. ВЫБРАЛИ ТОВАР -> ВЫБИРАЕМ РЕЖИМ РИСКА ---
+@router.callback_query(StarGameStates.selecting_item, F.data.startswith("gamble_item_"))
+async def gamble_mode_select(callback: CallbackQuery, state: FSMContext):
+    item_id = int(callback.data.split("_")[2])
+    item = await rq.get_item_by_id(item_id)
+
+    # Цены в звездах
+    full_price = int(item.price)
+    price_50 = max(1, int(full_price * 0.5))  # 50%
+    price_15 = max(1, int(full_price * 0.15))  # 15%
+
+    await state.update_data(item_id=item_id, item_name=item.name, p50=price_50, p15=price_15)
+
+    text = (
+        f"<b>🎲 ИГРА ЗА: {item.name}</b>\n"
+        f"💰 Рыночная цена: {full_price} RUB\n\n"
+        "<b>Выберите свои шансы:</b>\n\n"
+        f"1️⃣ <b>50/50 (Половина цены)</b>\n"
+        f"💳 Стоимость: <b>{price_50} 🌟</b>\n"
+        f"🎯 Угадай: Чётное или Нечётное\n\n"
+        f"2️⃣ <b>ДЖЕКПОТ (За копейки)</b>\n"
+        f"💳 Стоимость: <b>{price_15} 🌟</b>\n"
+        f"🎯 Угадай: Число (1 из 6)"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"⚖️ Шанс 50% ({price_50} ⭐️)", callback_data="starmode_50")],
+        [InlineKeyboardButton(text=f"🔥 Шанс 16% ({price_15} ⭐️)", callback_data="starmode_15")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="gamble_select_item")]
+    ])
+
+    await callback.message.edit_caption(caption=text, reply_markup=kb, parse_mode="HTML")
+    await state.set_state(StarGameStates.choosing_mode)
+
+
+# --- 3. ВЫБИРАЕМ НА ЧТО СТАВИТЬ (ЧИСЛО ИЛИ ЧЕТ/НЕЧЕТ) ---
+@router.callback_query(StarGameStates.choosing_mode)
+async def gamble_bet_select(callback: CallbackQuery, state: FSMContext):
+    mode = callback.data
+    data = await state.get_data()
+    keyboard = []
+
+    if mode == "starmode_50":
+        pay_amount = data['p50']
+        task_text = "🔮 <b>На что ставим? (Чет / Нечет)</b>"
+        keyboard.append([InlineKeyboardButton(text="2️⃣ ЧЁТНОЕ", callback_data="pay_bet_even")])
+        keyboard.append([InlineKeyboardButton(text="1️⃣ НЕЧЁТНОЕ", callback_data="pay_bet_odd")])
+
+    elif mode == "starmode_15":
+        pay_amount = data['p15']
+        task_text = "🔮 <b>Угадайте число на кубике:</b>"
+        keyboard.append([InlineKeyboardButton(text=f"{i} 🎲", callback_data=f"pay_bet_num_{i}") for i in range(1, 4)])
+        keyboard.append([InlineKeyboardButton(text=f"{i} 🎲", callback_data=f"pay_bet_num_{i}") for i in range(4, 7)])
+
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"gamble_item_{data['item_id']}")])
+
+    await state.update_data(pay_amount=pay_amount)
+
+    text = (
+        f"<b>⭐️ ПОДТВЕРЖДЕНИЕ</b>\n\n"
+        f"🎁 Приз: <b>{data['item_name']}</b>\n"
+        f"💳 Спишется: <b>{pay_amount} Stars</b>\n\n"
+        f"{task_text}"
+    )
+
+    await callback.message.edit_caption(caption=text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+    await state.set_state(StarGameStates.placing_bet)
+
+
+# --- 4. ВЫСТАВЛЯЕМ СЧЕТ (INVOICE) ---
+@router.callback_query(StarGameStates.placing_bet)
+async def send_gamble_invoice(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+
+    # ФОРМИРУЕМ КОРОТКИЙ PAYLOAD (до 128 байт)
+    # Мы убрали 'item_name', так как он занимал слишком много места
+    payload_data = {
+        "t": "g",  # t = type (gamble)
+        "id": data['item_id'],  # id товара
+        "b": callback.data  # b = bet (ставка)
+    }
+
+    await callback.message.answer_invoice(
+        title=f"Розыгрыш: {data['item_name']}",
+        description="Оплата участия в лотерее. Победа = Автовыдача товара.",
+        payload=json.dumps(payload_data),  # Теперь это короткая строка
+        currency="XTR",
+        prices=[LabeledPrice(label="Ставка", amount=data['pay_amount'])],
+        provider_token=""
+    )
+    await callback.answer()
+    await callback.message.delete()
+
+
+# --- 5. ПРОВЕРКА И БРОСОК (ЭТАПЫ ОПЛАТЫ) ---
+@router.pre_checkout_query()
+async def gamble_pre_checkout(query: PreCheckoutQuery):
+    await query.answer(ok=True)
+
+
+@router.message(F.successful_payment)
+async def gamble_payment_success(message: Message):
+    try:
+        data = json.loads(message.successful_payment.invoice_payload)
+    except:
+        return
+
+    # Проверяем, что это оплата именно игры
+    if data.get("type") != "gamble": return
+
+    await message.answer("✅ <b>Ставка принята!</b> Бросаем кости...", parse_mode="HTML")
+
+    dice_msg = await message.answer_dice(emoji="🎲")
+    result = dice_msg.dice.value
+    await asyncio.sleep(4)  # Интрига
+
+    # Логика победы
+    bet = data['bet']
+    is_win = False
+
+    if "even" in bet and result % 2 == 0:
+        is_win = True
+    elif "odd" in bet and result % 2 != 0:
+        is_win = True
+    elif "num" in bet:
+        target = int(bet.split("_")[-1])
+        if target == result: is_win = True
+
+    if is_win:
+        await dice_msg.reply(
+            f"🎉 <b>ПОБЕДА! Выпало {result}!</b>\n\n"
+            f"🎁 Товар: <b>{data['item_name']}</b>\n"
+            f"<i>Данные отправлены ниже...</i>",
+            parse_mode="HTML"
+        )
+        # --- ТУТ ФУНКЦИЯ ВЫДАЧИ ТОВАРА ---
+        # await rq.issue_item(message.from_user.id, data['item_id'])
+    else:
+        # Предлагаем попробовать снова
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Попробовать еще раз", callback_data="gamble_select_item")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="main")]
+        ])
+
+        await dice_msg.reply(
+            f"❌ <b>Выпало {result}. Не повезло.</b>\n"
+            f"Звезды списаны, товара нет. Попробуем снова?",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+
 @router.callback_query(F.data.startswith("pay_stars_"))
 async def pay_with_stars(callback: CallbackQuery, state: FSMContext):
     try:
-        item_id = callback.data.split('_')[2]
+        # 1. Извлекаем данные из callback_data
+        # Предполагаем формат pay_stars_{item_id}_{category_id}
+        data = callback.data.split('_')
+        item_id = data[2]
+
         item = await rq.get_item_by_id(item_id)
+        category_id = item.category  # Получаем категорию из данных товара
 
-        # Сохраняем данные в состоянии
         await state.update_data(item_id=item_id, user_id=callback.from_user.id)
-
-        # Конвертируем рубли в Stars (1 Star = ~6.5 руб)
         stars_amount = int(item.price // 1.15)
 
-        prices = [LabeledPrice(label=item.name, amount=stars_amount)]  # В копейках
+        # ... (код с обновлением caption) ...
 
+        # 2. Передаем аргументы в функцию клавиатуры
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
-            title=f"Покупка: {item.name}",
-            description="Оплата через Stars\nОплатите счет ниже\n👇👇👇",
-            provider_token="",  # Замените на ваш токен
+            title=f"Оплата заказа",
+            description=f"Товар: {item.name}",
+            provider_token="",
             currency="XTR",
-            prices=prices,
+            prices=[LabeledPrice(label=f"Оплата {item.name}", amount=stars_amount)],
             payload=f"stars_{item_id}_{callback.from_user.id}",
             start_parameter="create_invoice_stars",
-            reply_markup=kb.stars_payment_keyboard()
+            # ВОТ ТУТ ПЕРЕДАЕМ АРГУМЕНТЫ:
+            reply_markup=kb.stars_payment_keyboard(item_id, category_id)
         )
+
         await callback.answer()
+
     except Exception as e:
         logging.error(f"Stars payment error: {str(e)}")
         await callback.answer("⚠️ Ошибка при создании платежа")
@@ -301,29 +692,47 @@ async def purchase_history(callback: CallbackQuery):
     purchases = await rq.get_user_purchases(user_id)
 
     if not purchases:
-        history_text = "📜 <b>История покупок</b>\n\n"
-        history_text += "У вас пока нет покупок."
+        history_text = (
+            "📜 <b>ИСТОРИЯ ПОКУПОК</b>\n\n"
+            "<blockquote>У вас пока нет совершенных заказов.\n"
+            "Самое время что-нибудь выбрать!</blockquote>"
+        )
     else:
-        history_text = "📜 <b>Последние 5 покупок:</b>\n\n"
+        history_text = "📜 <b>ПОСЛЕДНИЕ ЗАКАЗЫ</b>\n\n"
+        # Перебираем последние 5 покупок
         for purchase in purchases[:5]:
             item = await rq.get_item_by_id(purchase.item_id)
-            history_text += f"• {item.name} - {purchase.date.strftime('%d.%m.%Y')}\n"
+            # Проверка: если товар удален из БД, пишем "Товар удален"
+            item_name = item.name if item else "📦 Товар удален"
+            date_str = purchase.date.strftime('%d.%m.%Y')
 
+            history_text += f"▫️ <b>{item_name}</b>\n"
+            history_text += f"└ 📅 <i>{date_str}</i>\n\n"
+
+    # Создаем объект медиа
     new_media = types.InputMediaPhoto(
-        media="AgACAgQAAxkBAAMMaJvBVw5xMUj1oc6kPPaHRIjnzhsAAm3LMRtzVOBQqtd_8MzFFMQBAAMCAAN5AAM2BA",
-        # Замените на ID фото для истории
+        media="AgACAgQAAxkBAAIRhmmBCKVgYQUdGJR1w487TY2Ow5pHAAJsEGsb3gYIULDY1Wk8kLn4AQADAgADeAADOAQ",
         caption=history_text,
         parse_mode="HTML"
     )
 
-    await callback.message.edit_media(
-        media=new_media,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад", callback_data="profile")]
-            ]
-        )
+    # Кнопка возврата в профиль
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад в профиль", callback_data="main")]
+        ]
     )
+
+    try:
+        await callback.message.edit_media(
+            media=new_media,
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logging.error(f"Error in purchase history: {e}")
+        # Если фото не грузится или сообщение то же самое
+        await callback.answer("Ошибка при загрузке истории", show_alert=True)
+
     await callback.answer()
 
 
@@ -332,32 +741,322 @@ async def referral_system(callback: CallbackQuery):
     user_id = callback.from_user.id
     user = await rq.get_user(user_id)
 
+    # Заменяем на реальный юзернейм твоего бота без @
+    bot_username = "alfasRobot"
+
     referral_text = (
-        "🎁 <b>Реферальная система</b>\n\n"
-        f"👥 Приглашено пользователей: {user.referrals}\n"
-        f"💰 Заработано: {user.referrals * 50} RUB\n\n"
-        "Приглашайте друзей и получайте 10% с их покупки\n"
-        f"Ваша реферальная ссылка:\nhttps://t.me/@alfasRobot?start={user_id}"
+        "🎁 <b>РЕФЕРАЛЬНАЯ ПРОГРАММА</b>\n\n"
+        "<blockquote>Приглашайте друзей и зарабатывайте вместе! \n"
+        "Вы получаете <b>50 RUB</b> за каждого активного друга + <b>10%</b> с их покупок.</blockquote>\n\n"
+        f"👥 Приглашено друзей: <b>{user.referrals}</b>\n"
+        f"💰 Ваш бонус: <b>{user.referrals * 50} RUB</b>\n\n"
+        f"🔗 <b>Ваша ссылка для приглашения:</b>\n"
+        f"<code>https://t.me/{bot_username}?start={user_id}</code>"
     )
 
-
     new_media = types.InputMediaPhoto(
-        media="AgACAgQAAxkBAAMOaJvBgKPQzZfGA4HEV3NnW1KZ8vQAAufKMRvHC-BQWNf-qW3dZlgBAAMCAAN5AAM2BA",
-        # Замените на ID фото для рефералов
+        media="AgACAgQAAxkBAAIRhmmBCKVgYQUdGJR1w487TY2Ow5pHAAJsEGsb3gYIULDY1Wk8kLn4AQADAgADeAADOAQ",
         caption=referral_text,
         parse_mode="HTML"
     )
 
+    # Добавим кнопку "Поделиться", чтобы юзеру было проще переслать ссылку
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Пригласить друга",
+                                  switch_inline_query=f"\nЗаходи в лучший магазин аккаунтов! Моя ссылка: https://t.me/{bot_username}?start={user_id}")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="main")]
+        ]
+    )
+
     await callback.message.edit_media(
         media=new_media,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад", callback_data="profile")]
-            ]
-        )
+        reply_markup=keyboard
     )
     await callback.answer()
 
+
+# --- 1. ЗАПУСК ИГРЫ: ВЫБОР ТОВАРА ---
+@router.callback_query(F.data == "stars_game")
+async def stars_game_start(callback: CallbackQuery, state: FSMContext):
+    # Берем товары (например, первые 5 из категории 1)
+    items = await rq.get_items_by_category_paginated(category_id=1, limit=5)
+
+    if not items:
+        await callback.answer("😔 Товаров пока нет", show_alert=True)
+        return
+
+    keyboard = []
+    for item in items:
+        # Для примера: 1 рубль = 1 звезда (или настрой свой курс)
+        price_in_stars = int(item.price)
+        btn_text = f"{item.name} | ⭐️ {price_in_stars}"
+        keyboard.append([InlineKeyboardButton(text=btn_text, callback_data=f"star_item_{item.id}")])
+
+    keyboard.append([InlineKeyboardButton(text="🔙 В меню", callback_data="main")])
+
+    text = (
+        "<b>🌟 ЗВЁЗДНАЯ РУЛЕТКА</b>\n\n"
+        "<blockquote>Хотите получить топовый аккаунт за копейки?\n"
+        "Оплатите часть стоимости Звездами (Telegram Stars) и испытайте удачу!</blockquote>\n\n"
+        "👇 <b>Выберите приз, за который будем играть:</b>"
+    )
+
+    await callback.message.edit_media(
+        media=types.InputMediaPhoto(
+            media="AgACAgQAAxkBAAIReGmBBY8-2iXa7erdW74PztiMWiRTAAJTEGsb3gYIUEricwettX1qAQADAgADeQADOAQ",
+            # Твоя картинка
+            caption=text,
+            parse_mode="HTML"
+        ),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
+    await state.set_state(StarGameStates.selecting_item)
+
+
+# --- 2. ВЫБОР РИСКА ---
+@router.callback_query(StarGameStates.selecting_item, F.data.startswith("star_item_"))
+async def stars_mode_select(callback: CallbackQuery, state: FSMContext):
+    item_id = int(callback.data.split("_")[2])
+    item = await rq.get_item_by_id(item_id)
+
+    # Расчет цены в звездах (округляем до целого, так как Stars - это целые числа)
+    full_price = int(item.price)
+    price_50 = max(1, int(full_price * 0.5))  # 50% цены
+    price_15 = max(1, int(full_price * 0.15))  # 15% цены
+
+    # Сохраняем данные во временное хранилище
+    await state.update_data(item_id=item_id, item_name=item.name, p50=price_50, p15=price_15)
+
+    text = (
+        f"<b>🎲 ИГРА ЗА: {item.name}</b>\n"
+        f"💎 Полная цена: <s>{full_price} ⭐️</s>\n\n"
+        "<b>Выберите стратегию:</b>\n\n"
+        f"1️⃣ <b>ШАНС 50/50</b>\n"
+        f"├ 💳 Стоимость: <b>{price_50} ⭐️</b>\n"
+        f"└ 🎯 Задача: Угадать Чёт или Нечёт\n\n"
+        f"2️⃣ <b>ДЖЕКПОТ (1 к 6)</b>\n"
+        f"├ 💳 Стоимость: <b>{price_15} ⭐️</b>\n"
+        f"└ 🎯 Задача: Угадать точное число кубика"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"⚖️ 50% (Цена: {price_50} ⭐️)", callback_data="starmode_50")],
+        [InlineKeyboardButton(text=f"🔥 Риск (Цена: {price_15} ⭐️)", callback_data="starmode_15")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="stars_game")]
+    ])
+
+    await callback.message.edit_caption(caption=text, reply_markup=kb, parse_mode="HTML")
+    await state.set_state(StarGameStates.choosing_mode)
+
+
+# --- 3. ВЫБОР КОНКРЕТНОЙ СТАВКИ ---
+@router.callback_query(StarGameStates.choosing_mode)
+async def stars_bet_select(callback: CallbackQuery, state: FSMContext):
+    mode = callback.data
+    data = await state.get_data()
+    keyboard = []
+
+    if mode == "starmode_50":
+        pay_amount = data['p50']
+        task_text = "🔮 На что ставите?"
+        keyboard.append([InlineKeyboardButton(text="2️⃣ ЧЁТНОЕ (2, 4, 6)", callback_data="pay_bet_even")])
+        keyboard.append([InlineKeyboardButton(text="1️⃣ НЕЧЁТНОЕ (1, 3, 5)", callback_data="pay_bet_odd")])
+
+    elif mode == "starmode_15":
+        pay_amount = data['p15']
+        task_text = "🔮 Какое число выпадет?"
+        # Кнопки 1-6
+        row1 = [InlineKeyboardButton(text=f"{i} 🎲", callback_data=f"pay_bet_num_{i}") for i in range(1, 4)]
+        row2 = [InlineKeyboardButton(text=f"{i} 🎲", callback_data=f"pay_bet_num_{i}") for i in range(4, 7)]
+        keyboard.append(row1)
+        keyboard.append(row2)
+
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="stars_game")])
+
+    # Сохраняем сумму к оплате
+    await state.update_data(pay_amount=pay_amount)
+
+    text = (
+        f"<b>⭐️ ПОЧТИ ГОТОВО</b>\n\n"
+        f"📦 Товар: <b>{data['item_name']}</b>\n"
+        f"💳 К оплате: <b>{pay_amount} XTR</b>\n\n"
+        f"{task_text}\n"
+        "<i>Нажмите на кнопку с прогнозом, чтобы перейти к оплате.</i>"
+    )
+
+    await callback.message.edit_caption(caption=text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+    await state.set_state(StarGameStates.placing_bet)
+
+
+# --- 4. ОТПРАВКА СЧЕТА НА ОПЛАТУ ---
+@router.callback_query(StarGameStates.placing_bet)
+async def send_stars_invoice(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    bet_type = callback.data  # pay_bet_even, pay_bet_num_6 и т.д.
+    amount = data['pay_amount']
+    item_id = data['item_id']
+
+    # Формируем payload (скрытые данные чека)
+    # Это позволит нам понять, что делать ПОСЛЕ оплаты
+    payload_data = {
+        "type": "game_bet",
+        "user_id": callback.from_user.id,
+        "item_id": item_id,
+        "bet": bet_type,
+        "item_name": data['item_name']
+    }
+
+    # Отправляем инвойс
+    await callback.message.answer_invoice(
+        title=f"Игра за {data['item_name']}",
+        description=f"Ставка: {bet_type}. Если выиграете - товар ваш!",
+        payload=json.dumps(payload_data),  # Упаковываем данные в строку
+        currency="XTR",  # ВАЖНО: Валюта Telegram Stars
+        prices=[LabeledPrice(label="Участие", amount=amount)],  # Сумма
+        provider_token=""  # Для Stars токен оставляем пустым!
+    )
+    await callback.answer()
+
+
+# --- 5. ПОДТВЕРЖДЕНИЕ ПЕРЕД ОПЛАТОЙ (Pre-Checkout) ---
+@router.pre_checkout_query()
+async def on_pre_checkout(pre_checkout_query: PreCheckoutQuery):
+    # Всегда отвечаем OK, если готовы принять оплату
+    await pre_checkout_query.answer(ok=True)
+import json
+import asyncio
+from aiogram.types import LabeledPrice, PreCheckoutQuery, ContentType
+
+# --- 6. ФИНАЛ: ОПЛАТА ПРОШЛА -> КИДАЕМ КУБИК ---
+from datetime import datetime
+
+
+# Убедись, что notify_admin и orders импортированы или доступны в этом файле
+
+@router.message(F.successful_payment)
+async def payment_handler(message: Message, state: FSMContext):
+    # 1. Пытаемся понять, что это за оплата (Рулетка или Обычная)
+    payload_str = message.successful_payment.invoice_payload
+
+    try:
+        data = json.loads(payload_str)  # Пробуем прочитать как JSON
+    except:
+        data = None
+
+    # ==============================
+    # ВАРИАНТ 1: ЭТО РУЛЕТКА (JSON)
+    # ==============================
+    if data and data.get("t") == "g":
+
+        # Сразу кидаем сообщение и кубик
+        await message.answer("✅ <b>Ставка принята!</b> Испытываем удачу...", parse_mode="HTML")
+        dice_msg = await message.answer_dice(emoji="🎲")
+        result = dice_msg.dice.value
+        await asyncio.sleep(4)  # Пауза для интриги
+
+        # Логика победы
+        bet = data['b']
+        is_win = False
+
+        if "even" in bet and result % 2 == 0:
+            is_win = True
+        elif "odd" in bet and result % 2 != 0:
+            is_win = True
+        elif "num" in bet:
+            target = int(bet.split("_")[-1])
+            if target == result: is_win = True
+
+        # --- ЕСЛИ ВЫИГРАЛ ---
+        if is_win:
+            item_id = data['id']
+            item = await rq.get_item_by_id(item_id)
+            user_id = message.from_user.id
+
+            # --- ТВОЙ КОД СОЗДАНИЯ ЗАКАЗА ---
+            order_id = int(datetime.now().timestamp())
+
+            orders[order_id] = {
+                'user_id': user_id,
+                'item_id': item_id,
+                'status': 'waiting_number',
+                'payment_method': 'Stars (Win)'
+            }
+
+            # Уведомление админу
+            try:
+                await notify_admin(
+                    bot=message.bot,
+                    order_id=order_id,
+                    user_id=user_id,
+                    item_name=item.name,
+                    payment_method='Stars (Win)'
+                )
+            except Exception as e:
+                logging.error(f"Ошибка уведомления админа: {e}")
+
+            # Сообщение пользователю (Твой текст)
+            await dice_msg.reply(
+                f"🎉 <b>ПОБЕДА! Выпало число {result}!</b>\n\n"
+                "✅ Оплата прошла успешно! Ожидайте номер, Администрация пришлет его вам в течение 5 минут⌛.",
+                reply_markup=kb.settings(),  # Или kb.main_reply_keyboard()
+                parse_mode="HTML"
+            )
+
+        # --- ЕСЛИ ПРОИГРАЛ ---
+        else:
+            kb_loss = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Попробовать еще раз", callback_data="gamble_select_item")],
+                [InlineKeyboardButton(text="🏠 В меню", callback_data="main")]
+            ])
+            await dice_msg.reply(
+                f"❌ <b>Выпало {result}. Не повезло.</b>\n"
+                f"Звезды списаны, товар не получен. Попробуйте снова!",
+                reply_markup=kb_loss,
+                parse_mode="HTML"
+            )
+
+        await state.clear()
+        return
+
+    # ==========================================
+    # ВАРИАНТ 2: ОБЫЧНАЯ ПОКУПКА (Твой старый код)
+    # Если это не JSON рулетки, значит это обычный платеж
+    # ==========================================
+    try:
+        # Тут твой старый метод разбора через split
+        # payload_str выглядит как "type_itemId_userId"
+        parts = payload_str.split('_')
+        if len(parts) >= 3:
+            _, item_id, user_id = parts  # Игнорируем префикс, берем ID
+
+            item = await rq.get_item_by_id(int(item_id))
+            order_id = int(datetime.now().timestamp())
+
+            orders[order_id] = {
+                'user_id': int(user_id),
+                'item_id': int(item_id),
+                'status': 'waiting_number',
+                'payment_method': 'Stars'
+            }
+
+            await message.answer(
+                "✅ Оплата прошла успешно! Ожидайте номер, Администрация пришлет его вам в течение 5 минут⌛.",
+                reply_markup=kb.settings()
+            )
+
+            await notify_admin(
+                bot=message.bot,
+                order_id=order_id,
+                user_id=int(user_id),
+                item_name=item.name,
+                payment_method='Stars'
+            )
+            await state.clear()
+
+    except Exception as e:
+        logging.error(f"Payment processing error: {str(e)}")
+        await message.answer("⚠️ Произошла ошибка при обработке платежа")
 
 
 
@@ -369,31 +1068,29 @@ async def show_profile(callback: CallbackQuery):
         user = await rq.get_user(user_id)
         purchases = await rq.get_user_purchases(user_id)
 
+        # Форматируем текст: Заголовок + Цитата + Моноширинный текст для копирования
         profile_text = (
-            f"👤 <b>Ваш профиль</b>\n\n"
-            f"🆔 ID: <code>{user_id}</code>\n"
-            f"📅 Регистрация: {user.registered_at.strftime('%d.%m.%Y %H:%M')}\n"
-            f"🛒 Покупок: {len(purchases)}\n"
-            f"👥 Рефералов: {user.referrals}\n"
-            f"💸 Баланс: {user.balance} RUB\n\n"
-            f"🔗 Реферальная ссылка: https://t.me/alfasRobot?start={user_id}"
+            "<b>👤 ЛИЧНЫЙ КАБИНЕТ</b>\n\n"
+            f"<blockquote><b>🆔 Мой ID:</b> <code>{user_id}</code>\n"
+            f"<b>🗓 Регистрация:</b> {user.registered_at.strftime('%d.%m.%Y')}\n"
+            f"<b>🛒 Покупок:</b> {len(purchases)}\n"
+            f"<b>👥 Рефералов:</b> {user.referrals}\n"
+            f"<b>💸 Баланс:</b> {user.balance} RUB</blockquote>\n\n"
+            f"<b>🔗 Реферальная ссылка:</b>\n"
+            f"<code>https://t.me/alfasRobot?start={user_id}</code>"
         )
 
-        # Создаем новое медиа для профиля
         new_media = types.InputMediaPhoto(
-            media="AgACAgQAAxkBAAMEaJvAKelwUJ3FyF2K28N4LVSPrpcAAiTKMRuGWOFQ-eq_9D5tqiQBAAMCAAN5AAM2BA",
-            # Замените на ID фото для профиля
+            media="AgACAgQAAxkBAAIRhmmBCKVgYQUdGJR1w487TY2Ow5pHAAJsEGsb3gYIULDY1Wk8kLn4AQADAgADeAADOAQ",
             caption=profile_text,
             parse_mode="HTML"
         )
 
-        # Редактируем сообщение, заменяя медиа
         await callback.message.edit_media(
             media=new_media,
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="🔙 Назад", callback_data="main")
-                    ]
+                    [InlineKeyboardButton(text="🔙 Назад", callback_data="main")]
                 ]
             )
         )
@@ -544,12 +1241,19 @@ async def pay_with_crypto(callback: CallbackQuery, state: FSMContext):
         # Получаем прямую ссылку на оплату через Crypto Bot
         crypto_bot_link = f"https://t.me/CryptoBot?start={invoice['bot_invoice_url'].split('=')[-1]}"
 
+        # ОФОРМЛЕНИЕ ТЕКСТА
+        payment_text = (
+            f"<b>💎 ОПЛАТА ЧЕРЕЗ CRYPTO BOT</b>\n\n"
+            f"<blockquote><b>💰 Сумма:</b> {invoice['amount']} {invoice['asset']}\n"
+            f"<b>🧾 Заказ:</b> #{order_id}</blockquote>\n"
+            "➖➖➖➖➖➖➖➖➖➖➖➖➖\n"
+            "<b>📥 Прямой перевод (Сеть TRC-20):</b>\n"
+            f"<code>TQFosX3FGMoxs2jCS2EG84wALZgfqLx6yK</code>\n\n"
+            "<i>⚠️ После оплаты нажмите кнопку ниже для проверки транзакции.</i>"
+        )
+
         await callback.message.answer(
-            f"💎 Оплата через Crypto Bot:\n"
-            f"• Сумма: {invoice['amount']} {invoice['asset']}\n"
-            '➖➖➖➖➖➖➖➖➖➖➖➖➖\n'
-            f"Или отправьте {invoice['amount']} USDT по адрессу (сеть Trc-20):\n"
-            f"<code>TQFosX3FGMoxs2jCS2EG84wALZgfqLx6yK</code>\n",
+            text=payment_text,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [
@@ -584,6 +1288,28 @@ async def pay_with_crypto(callback: CallbackQuery, state: FSMContext):
         await callback.answer("⚠️ Ошибка при создании платежа")
 
 
+@router.callback_query(F.data.startswith("cancel_crypto_"))
+async def cancel_crypto_payment(callback: CallbackQuery):
+    # Извлекаем order_id из callback_data
+    order_id = callback.data.split('_')[2]
+
+    # Здесь можно добавить логику удаления заказа из БД, если это необходимо:
+    # await rq.delete_order(order_id)
+
+    try:
+        # Редактируем старое сообщение, чтобы пользователь видел статус отмены
+        await callback.message.edit_text(
+            "<b>❌ ОПЛАТА ОТМЕНЕНА</b>\n\n"
+            f"<blockquote>Заказ <b>#{order_id}</b> был успешно аннулирован.</blockquote>\n"
+            "Вы можете выбрать другой товар или способ оплаты.",
+            parse_mode="HTML"
+        )
+    except Exception:
+        # Если редактирование невозможно (например, сообщение старое), просто удаляем
+        await callback.message.delete()
+        await callback.answer("Заказ отменен", show_alert=True)
+
+    await callback.answer()
 # Обработчик проверки оплаты
 @router.callback_query(F.data.startswith("check_crypto_"))
 async def check_crypto_payment(callback: CallbackQuery):
@@ -641,33 +1367,30 @@ async def check_crypto_payment(callback: CallbackQuery):
 @router.callback_query(F.data == "info")
 async def info_callback(callback: CallbackQuery):
     predefined_text = (
-        "❗️ Рекомендации на первый день после покупки:\n\n"
-        "● Не начинайте переписку, не вступайте в группы/каналы/беседы.\n"
-        "● Не меняйте настройки: НИКНЕЙМ, ЮЗЕРНЕЙМ, АВАТАРКУ\n"
-        "● Дайте аккаунту «отлежаться» — это поможет избежать блокировок и создать надежный аккаунт.\n\n"
-        "📚 Информация о нашем магазине:\n\n"
-        "• Мы продаем Telegram-аккаунты БЕЗ спам-блока\n"
+        "<b>ℹ️ ИНФОРМАЦИЯ И РЕКОМЕНДАЦИИ</b>\n\n"
+        "<b>⚠️ ПРАВИЛА ПОСЛЕ ПОКУПКИ:</b>\n"
+        "<blockquote>• Не начинайте переписки сразу\n"
+        "• Не вступайте в группы и каналы\n"
+        "• <b>ЗАПРЕЩЕНО:</b> менять ник, юзернейм и аватарку в первый день\n"
+        "• Дайте аккаунту «отлежаться» 24 часа</blockquote>\n\n"
+        "<b>📚 О НАШЕМ МАГАЗИНЕ:</b>\n"
+        "• Аккаунты строго <b>БЕЗ спам-блока</b>\n"
         "• Поддержка 24/7: @qvvor\n"
-        "💬 По вопросам сотрудничества: @qvvor\n\n"
-        "Возврат средств при слете аккаунта не предусмотрен."
+        "• Сотрудничество: @qvvor\n\n"
+        "<i>⛔️ Возврат средств при слете аккаунта не предусмотрен.</i>"
     )
 
-    # Создаем медиа-объект с информацией
     new_media = types.InputMediaPhoto(
-        media="AgACAgQAAxkBAAMMaJvBVw5xMUj1oc6kPPaHRIjnzhsAAm3LMRtzVOBQqtd_8MzFFMQBAAMCAAN5AAM2BA",
-        caption=predefined_text
+        media="AgACAgQAAxkBAAIRhmmBCKVgYQUdGJR1w487TY2Ow5pHAAJsEGsb3gYIULDY1Wk8kLn4AQADAgADeAADOAQ",
+        caption=predefined_text,
+        parse_mode="HTML"
     )
 
-    back_keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="info_back")]
-        ]
-    )
-
-    # Редактируем текущее сообщение с новым медиа
     await callback.message.edit_media(
         media=new_media,
-        reply_markup=back_keyboard
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="main")]
+        ])
     )
     await callback.answer()
 
@@ -675,53 +1398,63 @@ async def info_callback(callback: CallbackQuery):
 @router.callback_query(F.data == "dogovor")
 async def dogovor_callback(callback: CallbackQuery):
     predefined_text = (
-        "Настоящее пользовательское соглашение (далее — \"Соглашение\") регулирует порядок использования сервиса, предоставляемого ботом @alfasRobot (далее — \"Сервис\").\n"
-        "Используя Сервис, вы подтверждаете своё согласие с условиями данного Соглашения.\n\n\n"
-        "1. Стоимость услуг.\n\n"
-        "1.1. Стоимость активаций списывается в соответствии с действующим прейскурантом, который отображается перед покупкой номера.\n"
-        "1.2. Средства списываются с вашего баланса по завершению операции, как указано в пунктах 1.4 и 1.5 регламента.\n\n"
-        "2. Отмена операций.\n\n"
-        "2.1. Если номер был выделен, но вы не получили код из SMS, вы вправе отменить операцию в любой момент без какого-либо штрафа.\n\n"
-        "3. Согласие на получение рекламы.\n"
-        "3.1. Используя Сервис, вы даёте согласие на получение рекламных материалов от @alfasRobot.\n\n"
-        "4. Запрещённые действия.\n\n"
-        "4.2. Запрещено использование номеров с целями, нарушающими положения Уголовного кодекса РФ или любой другой страны.\n\n"
-        "4.3. Возврат средств при слете аккаунта не предусмотрен."
+        "<b>📜 ПОЛЬЗОВАТЕЛЬСКОЕ СОГЛАШЕНИЕ</b>\n\n"
+        "Используя сервис <b>@alfasRobot</b>, вы подтверждаете согласие с условиями:\n\n"
+        "<b>1️⃣ СТОИМОСТЬ УСЛУГ</b>\n"
+        "<blockquote>Списание средств происходит согласно прейскуранту по завершению операции.</blockquote>\n"
+        "<b>2️⃣ ОТМЕНА ОПЕРАЦИЙ</b>\n"
+        "<blockquote>Если код из SMS не пришел, вы можете отменить операцию без штрафа.</blockquote>\n"
+        "<b>3️⃣ РЕКЛАМА</b>\n"
+        "<blockquote>Вы соглашаетесь на получение рассылок от сервиса.</blockquote>\n"
+        "<b>4️⃣ ЗАПРЕТЫ</b>\n"
+        "<blockquote>Запрещено нарушение законов РФ и других стран.\n"
+        "<b>Возврат при слете аккаунта не предусмотрен.</b></blockquote>"
     )
 
-    # Создаем медиа-объект с договором
     new_media = types.InputMediaPhoto(
-        media="AgACAgQAAxkBAAMMaJvBVw5xMUj1oc6kPPaHRIjnzhsAAm3LMRtzVOBQqtd_8MzFFMQBAAMCAAN5AAM2BA",
-        caption=predefined_text
+        media="AgACAgQAAxkBAAIRhmmBCKVgYQUdGJR1w487TY2Ow5pHAAJsEGsb3gYIULDY1Wk8kLn4AQADAgADeAADOAQ",
+        caption=predefined_text,
+        parse_mode="HTML"
     )
 
-    back_keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="info_back")]
-        ]
-    )
-
-    # Редактируем текущее сообщение с новым медиа
     await callback.message.edit_media(
         media=new_media,
-        reply_markup=back_keyboard
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="main")]
+        ])
     )
     await callback.answer()
 
 
 # Обработчик кнопки "Назад" в информационном сообщении
+from aiogram.exceptions import TelegramBadRequest
+from contextlib import suppress
+
+
 @router.callback_query(F.data == "info_back")
 async def info_back(callback: CallbackQuery):
-    # Восстанавливаем главное меню с фотографией
-    new_media = types.InputMediaPhoto(
-        media="AgACAgQAAxkBAAMEaJvAKelwUJ3FyF2K28N4LVSPrpcAAiTKMRuGWOFQ-eq_9D5tqiQBAAMCAAN5AAM2BA",
-        caption='🔐 Добро пожаловать в магазин Telegram-аккаунтов!'
+    # Улучшенный текст главного меню
+    main_text = (
+        "<b>🔐 ДОБРО ПОЖАЛОВАТЬ В МАГАЗИН</b>\n"
+        "<blockquote>Лучшие Telegram аккаунты для ваших целей:\n"
+        "• Высокая отлега\n"
+        "• Низкая цена\n"
+        "<b>⚡️ Выберите нужный раздел ниже:</b>"
     )
 
-    await callback.message.edit_media(
-        media=new_media,
-        reply_markup=kb.settings()
+    new_media = types.InputMediaPhoto(
+        media="AgACAgQAAxkBAAIRhmmBCKVgYQUdGJR1w487TY2Ow5pHAAJsEGsb3gYIULDY1Wk8kLn4AQADAgADeAADOAQ",
+        caption=main_text,
+        parse_mode="HTML"  # Обязательно для работы тегов
     )
+
+    # Используем suppress, чтобы избежать ошибок при повторном нажатии
+    with suppress(TelegramBadRequest):
+        await callback.message.edit_media(
+            media=new_media,
+            reply_markup=kb.settings()
+        )
+
     await callback.answer()
 
 # Обработчик ввода текста информации
@@ -733,7 +1466,7 @@ async def process_info_text(message: Message, state: FSMContext):
     # Создаем клавиатуру с кнопкой "Назад"
     back_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="info_back")]
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="main")]
         ]
     )
 
@@ -746,7 +1479,45 @@ async def process_info_text(message: Message, state: FSMContext):
     await state.clear()
 
 
+@router.callback_query(F.data.startswith("cancel_pay_"))
+async def cancel_stars_payment(callback: CallbackQuery):
+    data = callback.data.split('_')
+    item_id = data[2]
+    category_id = data[3]
 
+    item_data = await rq.get_item_by_id(item_id)
+
+    if not item_data:
+        await callback.answer("Ошибка: товар не найден")
+        return
+
+    # 1. Удаляем сообщение с инвойсом
+    await callback.message.delete()
+
+    # 2. Восстанавливаем текст первого сообщения (информация об аккаунте)
+    # ПРИМЕЧАНИЕ: Чтобы восстановить текст в ПРЕДЫДУЩЕМ сообщении,
+    # нам нужно знать его ID. Но проще всего отредактировать текущее или
+    # отправить заново. Если мы хотим «вернуть» вид выбора оплаты:
+
+    caption_text = (
+        "<b>💈 ИНФОРМАЦИЯ ОБ АККАУНТЕ</b>\n"
+        f"<blockquote><b>🏳️ Страна:</b> {item_data.name}\n"
+        f"<b>📡 Оператор:</b> любой\n"
+        f"<b>💵 Цена:</b> {item_data.price} RUB</blockquote>\n"
+        "➖➖➖➖➖➖➖➖➖➖\n"
+        "<b>💳 Выберите способ оплаты:</b>"
+    )
+
+    # Отправляем пользователю сообщение с выбором оплаты заново
+    # (так как инвойс был отдельным сообщением)
+    await callback.message.answer_photo(
+        photo="AgACAgQAAxkBAAIRhmmBCKVgYQUdGJR1w487TY2Ow5pHAAJsEGsb3gYIULDY1Wk8kLn4AQADAgADeAADOAQ",
+        caption=caption_text,
+        reply_markup=await kb.payment_methods(item_id, category_id),
+        parse_mode="HTML"
+    )
+
+    await callback.answer("Оплата отменена")
 
 @router.callback_query(F.data == "cancel_payment")
 async def cancel_payment(callback: CallbackQuery, state: FSMContext):
@@ -773,23 +1544,32 @@ async def pay_with_card(callback: CallbackQuery, state: FSMContext):
     item = await rq.get_item_by_id(item_id)
 
     await state.update_data(item_id=item_id, amount=item.price)
+
+    # Красивое пре-превью оплаты
+    text = (
+        "<b>💳 ОПЛАТА БАНКОВСКОЙ КАРТОЙ</b>\n\n"
+        f"<blockquote><b>📦 Товар:</b> {item.name}\n"
+        f"<b>💰 Сумма:</b> {item.price} RUB</blockquote>\n"
+        "Для генерации персональной ссылки нажмите кнопку ниже 👇"
+    )
+
     await callback.message.answer(
-        f"💳 Оплата картой РФ\n"
-        f"Сумма: {item.price} RUB\n"
-        f"Нажмите кнопку ниже чтобы создать платеж",
+        text=text,
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Создать платеж", callback_data="create_card_payment")]
-            ]
-        )
+            [InlineKeyboardButton(text="💎 Создать платеж", callback_data="create_card_payment")]
+        ])
     )
     await callback.answer()
 
-    @router.callback_query(F.data == "create_card_payment")
-    async def create_card_payment(callback: CallbackQuery, state: FSMContext):
+
+@router.callback_query(F.data == "create_card_payment")
+async def create_card_payment(callback: CallbackQuery, state: FSMContext):
+    try:
         data = await state.get_data()
         item = await rq.get_item_by_id(data['item_id'])
 
-        comment = f"pay_{callback.from_user.id}_{datetime.now().timestamp()}"
+        comment = f"pay_{callback.from_user.id}_{int(datetime.now().timestamp())}"
         link = generate_payment_link(item.price, comment)
 
         payments[callback.from_user.id] = {
@@ -799,17 +1579,30 @@ async def pay_with_card(callback: CallbackQuery, state: FSMContext):
             'item_id': data['item_id']
         }
 
+        # Красивый текст со ссылкой внутри слова
+        payment_ready_text = (
+            "<b>🔗 СЧЕТ СФОРМИРОВАН</b>\n\n"
+            f"<blockquote><b>💰 К оплате:</b> {item.price} RUB\n"
+            f"<b>📝 Комментарий:</b> <code>{comment}</code></blockquote>\n\n"
+            f"👉 Оплатите по <b><a href='{link}'>ссылке</a></b> (нажмите на слово)\n"
+            "<i>После оплаты обязательно нажмите кнопку проверки.</i>"
+        )
+
         await callback.message.answer(
-            f"🔗 Ссылка для оплаты: {link}\n"
-            
-            "После оплаты нажмите кнопку проверки",
+            text=payment_ready_text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Перейти к оплате", url=link)],
                 [InlineKeyboardButton(text="✅ Проверить оплату", callback_data="check_card_payment")],
                 [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_payment")]
-                ]
-            )
+            ])
         )
         await callback.answer()
+
+    except Exception as e:
+        logging.error(f"Card payment creation error: {str(e)}")
+        await callback.answer("⚠️ Ошибка при создании платежа", show_alert=True)
 
 
 @router.callback_query(F.data == "check_card_payment")
@@ -989,22 +1782,79 @@ class PromoStates(StatesGroup):
 # Обработчик кнопки "Промокод"
 @router.callback_query(F.data == "promo_code")
 async def promo_code(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer("Введите промокод:")
+    text = (
+        "<b>🎫 АКТИВАЦИЯ ПРОМОКОДА</b>\n\n"
+        "<blockquote>Введите ваш секретный код в чат.\n"
+        "Бонусы будут зачислены мгновенно!</blockquote>"
+    )
+
+    # Создаем кнопку отмены
+    # Убедись, что callback_data "info_back" у тебя обрабатывается для возврата в меню
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_promo")]
+    ])
+
+    await callback.message.edit_caption(
+        caption=text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
     await state.set_state(PromoStates.waiting_promo)
     await callback.answer()
+
+
+@router.callback_query(F.data == "cancel_promo")
+async def cancel_promo(callback: CallbackQuery, state: FSMContext):
+    await state.clear()  # Сбрасываем ожидание ввода промокода
+
+    # Возвращаем вид главного меню
+    main_text = (
+        "<b>🔐 ДОБРО ПОЖАЛОВАТЬ В МАГАЗИН</b>\n\n"
+        "<blockquote>Лучшие Telegram аккаунты для ваших целей:\n"
+        "• Высокая отлежка\n"
+        "• Чистые прокси\n"
+        "• Форматы Session + TData</blockquote>\n\n"
+        "<b>⚡️ Выберите нужный раздел ниже:</b>"
+    )
+
+    with suppress(TelegramBadRequest):
+        await callback.message.edit_caption(
+            caption=main_text,
+            reply_markup=kb.settings(),  # Твоя клавиатура главного меню
+            parse_mode="HTML"
+        )
+
+    await callback.answer("Действие отменено")
 
 # Обработчик ввода промокода
 @router.message(PromoStates.waiting_promo)
 async def check_promo(message: Message, state: FSMContext):
     user_input = message.text.strip().lower()
-    if user_input == PROMO_CODE.lower() or user_input == 'alfastars':
-        # Сохраняем информацию о примененном промокоде
-        await state.update_data(promo_applied=True)
-        await message.answer("✅ Промокод применен! Вы получите 10% скидку на следующую покупку.")
-    else:
-        await message.answer("❌ Неверный промокод. Попробуйте еще раз.")
-    await state.clear()
 
+    # Список доступных промокодов
+    valid_promos = [PROMO_CODE.lower(), 'alfastars']
+
+    if user_input in valid_promos:
+        await state.update_data(promo_applied=True)
+
+        success_text = (
+            "<b>✅ ПРОМОКОД АКТИВИРОВАН</b>\n\n"
+            "<blockquote>💳 Ваша скидка: <b>10%</b>\n"
+            "📌 Статус: <b>Применится при следующей оплате</b></blockquote>\n"
+            "<i>Удачных покупок в Alfas Shop!</i>"
+        )
+        await message.answer(success_text)
+        await state.clear()
+    else:
+        error_text = (
+            "<b>❌ ОШИБКА АКТИВАЦИИ</b>\n\n"
+            "Такого промокода не существует или его срок действия истек.\n"
+            "<i>Попробуйте ввести другой или вернитесь в меню.</i>"
+        )
+        await message.answer(error_text)
+        # Состояние НЕ сбрасываем (state.clear не пишем), чтобы юзер мог попробовать еще раз
+        # Либо добавь кнопку "Отмена"
 
 from aiogram.filters import Command
 from aiogram.types import Message

@@ -63,11 +63,19 @@ async def get_category_name(category_id):
     async with async_session() as session:
         return await session.scalar(select(Category.name).where(Category.id == category_id))
 
-async def get_items_by_category(category_id, limit=12, offset=0):
+
+from sqlalchemy import select, asc, desc  # Не забудьте импорты
+
+
+async def get_items_by_category(category_id, limit, offset, sort_mode="asc"):
     async with async_session() as session:
+        # Определяем направление сортировки
+        order = asc(Item.price) if sort_mode == "asc" else desc(Item.price)
+
         result = await session.scalars(
             select(Item)
             .where(Item.category == category_id)
+            .order_by(order)  # Применяем сортировку
             .limit(limit)
             .offset(offset)
         )
