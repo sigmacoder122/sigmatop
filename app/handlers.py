@@ -1871,31 +1871,90 @@ class BroadcastStates(StatesGroup):
 # Обработчик команды /all (только для админа)
 @router.message(Command("all"), F.from_user.id == ADMIN_ID)
 async def broadcast_command(message: Message, state: FSMContext):
-    await message.answer("Введите текст для рассылки:")
+    # Получаем количество пользователей перед рассылкой
+    users = await rq.get_all_users()
+    total_users = len(users)
+
+    await message.answer(
+        f"📊 Всего пользователей в базе: <b>{total_users}</b>\n\n"
+        f"✍️ Введите текст для рассылки:\n"
+        f"<i>Поддерживается HTML-разметка: жирный текст, курсив, спойлеры и т.д.</i>",
+        parse_mode="HTML"
+    )
     await state.set_state(BroadcastStates.waiting_broadcast_text)
 
 
 @router.message(BroadcastStates.waiting_broadcast_text, F.from_user.id == ADMIN_ID)
 async def process_broadcast_text(message: Message, state: FSMContext):
     broadcast_text = message.text
-    users = await rq.get_all_users()  # Получаем всех пользователей из базы
+    users = await rq.get_all_users()
+    total_users = len(users)
+
+    # Сохраняем текст и переходим в состояние подтверждения
+    await state.update_data(broadcast_text=broadcast_text, total_users=total_users)
+
+    # Показываем превью с форматированием
+    await message.answer(
+        f"📋 <b>Предпросмотр рассылки:</b>\n\n"
+        f"{broadcast_text}\n\n"
+        f"👥 Всего пользователей: <b>{total_users}</b>\n"
+        f"❓ Отправить рассылку? (да/нет)",
+        parse_mode="HTML"
+    )
+    await state.set_state(BroadcastStates.confirm_broadcast)
+
+
+@router.message(BroadcastStates.confirm_broadcast, F.from_user.id == ADMIN_ID)
+async def confirm_broadcast(message: Message, state: FSMContext):
+    if message.text.lower() not in ["да", "lf", "yes", "ок", "ok"]:
+        await message.answer("❌ Рассылка отменена")
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    broadcast_text = data.get('broadcast_text')
+    users = await rq.get_all_users()
+
+    # Отправляем сообщение о начале
+    status_msg = await message.answer("🔄 Начинаю рассылку...")
 
     success_count = 0
     fail_count = 0
 
     for user in users:
         try:
-            # Используем user.tg_id вместо user.id
-            await message.bot.send_message(user.tg_id, broadcast_text)
+            # Отправляем с HTML-разметкой, сохраняем форматирование
+            await message.bot.send_message(
+                user.tg_id,
+                broadcast_text,
+                parse_mode="HTML"  # Добавляем поддержку HTML
+            )
             success_count += 1
+
+            # Обновляем статус каждые 10 сообщений
+            if success_count % 10 == 0:
+                await status_msg.edit_text(
+                    f"🔄 Прогресс: {success_count}/{len(users)}"
+                )
+
         except Exception as e:
             print(f"Ошибка отправки пользователю {user.tg_id}: {e}")
             fail_count += 1
 
-    await message.answer(
-        f"✅ Рассылка завершена\n"
-        f"▪️ Успешно: {success_count}\n"
-        f"▪️ Не удалось: {fail_count}"
+    # Финальный отчет
+    await status_msg.edit_text(
+        f"✅ <b>Рассылка завершена</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"👥 Всего пользователей: <b>{len(users)}</b>\n"
+        f"✅ Успешно отправлено: <b>{success_count}</b>\n"
+        f"❌ Ошибок: <b>{fail_count}</b>",
+        parse_mode="HTML"
     )
     await state.clear()
+
+
+# Добавь это в состояние, если еще нет
+class BroadcastStates(StatesGroup):
+    waiting_broadcast_text = State()
+    confirm_broadcast = State()
 
