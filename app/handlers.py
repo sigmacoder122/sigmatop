@@ -1856,6 +1856,8 @@ async def check_promo(message: Message, state: FSMContext):
         # Состояние НЕ сбрасываем (state.clear не пишем), чтобы юзер мог попробовать еще раз
         # Либо добавь кнопку "Отмена"
 
+
+from aiogram import F  # 👈 Добавлен этот импорт!
 from aiogram.filters import Command
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
@@ -1866,6 +1868,7 @@ import app.database.requests as rq
 # Добавляем состояние для рассылки
 class BroadcastStates(StatesGroup):
     waiting_broadcast_text = State()
+    confirm_broadcast = State()  # 👈 Добавлено новое состояние
 
 
 # Обработчик команды /all (только для админа)
@@ -1891,7 +1894,7 @@ async def process_broadcast_text(message: Message, state: FSMContext):
     total_users = len(users)
 
     # Сохраняем текст и переходим в состояние подтверждения
-    await state.update_data(broadcast_text=broadcast_text, total_users=total_users)
+    await state.update_data(broadcast_text=broadcast_text)
 
     # Показываем превью с форматированием
     await message.answer(
@@ -1923,11 +1926,11 @@ async def confirm_broadcast(message: Message, state: FSMContext):
 
     for user in users:
         try:
-            # Отправляем с HTML-разметкой, сохраняем форматирование
+            # Отправляем с HTML-разметкой
             await message.bot.send_message(
                 user.tg_id,
                 broadcast_text,
-                parse_mode="HTML"  # Добавляем поддержку HTML
+                parse_mode="HTML"
             )
             success_count += 1
 
@@ -1951,10 +1954,4 @@ async def confirm_broadcast(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
     await state.clear()
-
-
-# Добавь это в состояние, если еще нет
-class BroadcastStates(StatesGroup):
-    waiting_broadcast_text = State()
-    confirm_broadcast = State()
 
