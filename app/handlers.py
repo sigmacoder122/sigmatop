@@ -95,13 +95,47 @@ verified_users = set()
 class BonusStates(StatesGroup):
     waiting_for_bonus = State()
 
+from aiogram import Bot
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+
+# Убедитесь, что у вас где-то вверху задан CHANNEL_ID
+CHANNEL_ID = '@eelge'
+
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext):
-    # 1. Проверяем, есть ли пользователь в списке проверенных
-    if message.from_user.id in verified_users:
+async def cmd_start(message: Message, state: FSMContext, bot: Bot):
+    user_id = message.from_user.id
+
+    # --- 1. ПРОВЕРКА ПОДПИСКИ ---
+    try:
+        member = await bot.get_chat_member(CHANNEL_ID, user_id)
+        if member.status not in ["member", "administrator", "creator"]:
+            # Пользователь не подписан — создаем клавиатуру с кнопкой подписки
+            kb_sub = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📢 Подписаться на канал", url="https://t.me/eelge")],
+                # Замените ссылку на свою
+                [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_subscription")]
+            ])
+
+            await message.answer(
+                "<b>⚠️ Обязательная подписка!</b>\n\n"
+                "<blockquote>Для использования бота и доступа к магазину, пожалуйста, "
+                "подпишитесь на наш новостной канал.</blockquote>",
+                reply_markup=kb_sub,
+                parse_mode="HTML"
+            )
+            return  # Прерываем выполнение функции, пока не подпишется
+    except Exception as e:
+        logging.error(f"Subscription check error on start: {e}")
+        # Если бот не является админом в канале, он выдаст ошибку.
+        # В таком случае пропускаем дальше или выводим сообщение об ошибке.
+
+    # --- 2. ПРОВЕРКА ВАЙТЛИСТА (ВЕРИФИКАЦИЯ) ---
+    if user_id in verified_users:
         await state.clear()
         return await show_main_menu(message)
 
+    # --- 3. ГЕНЕРАЦИЯ КАПЧИ (если подписан, но не верифицирован) ---
     await state.clear()
 
     correct_emoji = random.choice(EMOJIS)
@@ -125,9 +159,42 @@ async def cmd_start(message: Message, state: FSMContext):
     await message.answer_photo(
         photo="AgACAgQAAxkBAAIReGmBBY8-2iXa7erdW74PztiMWiRTAAJTEGsb3gYIUEricwettX1qAQADAgADeQADOAQ",
         caption=captcha_text,
-        reply_markup=keyboard
+        reply_markup=keyboard,
+        parse_mode="HTML"
     )
 
+
+from datetime import datetime
+from aiogram import types
+
+
+@router.callback_query(F.data == "check_subscription")
+async def check_subscription(callback: CallbackQuery, bot: Bot, state: FSMContext):
+    user_id = callback.from_user.id
+
+    try:
+        member = await bot.get_chat_member(CHANNEL_ID, user_id)
+        if member.status in ["member", "administrator", "creator"]:
+            # Удаляем сообщение с просьбой подписаться
+            await callback.message.delete()
+            await callback.answer("✅ Спасибо за подписку!", show_alert=True)
+
+            # Имитируем команду /start, чтобы запустить капчу или выдать меню
+            fake_message = types.Message(
+                message_id=callback.message.message_id + 1,
+                date=datetime.now(),
+                chat=callback.message.chat,
+                from_user=callback.from_user,
+                text="/start"
+            )
+            # Передаем управление обратно в cmd_start
+            await cmd_start(message=fake_message, state=state, bot=bot)
+
+        else:
+            await callback.answer("❌ Вы всё ещё не подписаны на канал!", show_alert=True)
+    except Exception as e:
+        logging.error(f"Subscription check error: {e}")
+        await callback.answer("⚠️ Ошибка проверки подписки, попробуйте позже", show_alert=True)
 
 @router.callback_query(CaptchaStates.waiting_captcha, F.data.startswith("check_"))
 async def process_captcha(callback: CallbackQuery, state: FSMContext):
