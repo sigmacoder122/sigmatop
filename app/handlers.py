@@ -434,6 +434,64 @@ async def show_item(callback: CallbackQuery):
     await callback.answer()
 
 
+from aiogram.filters import Command
+from sqlalchemy import func, select
+from datetime import datetime, timedelta
+from database.models import async_session, User, Order  # Импортируем из твоего models.py
+
+
+@router.message(Command("stat"))
+async def show_stats(message: Message):
+    """Показывает простую статистику бота"""
+
+    # Проверка на админа (замени на свой ID)
+    ADMIN_ID = 7658738825  # Укажи свой Telegram ID
+
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ Эта команда только для администратора")
+        return
+
+    try:
+        async with async_session() as session:
+            # Основные метрики
+            total_users = await session.scalar(select(func.count(User.id))) or 0
+
+            # Пользователи за сегодня
+            today_start = datetime.now().replace(hour=0, minute=0, second=0)
+            today_users = await session.scalar(
+                select(func.count(User.id)).where(User.registered_at >= today_start)
+            ) or 0
+
+            # Заказы
+            total_orders = await session.scalar(select(func.count(Order.id))) or 0
+            today_orders = await session.scalar(
+                select(func.count(Order.id)).where(Order.date >= today_start)
+            ) or 0
+
+            # Балансы
+            total_balance = await session.scalar(select(func.sum(User.balance))) or 0
+
+        # Формируем ответ
+        stat_text = (
+            f"📊 <b>СТАТИСТИКА БОТА</b>\n\n"
+            f"👥 <b>Пользователи:</b>\n"
+            f"├ Всего: <code>{total_users}</code>\n"
+            f"└ Новых сегодня: <code>{today_users}</code>\n\n"
+
+            f"📦 <b>Заказы:</b>\n"
+            f"├ Всего: <code>{total_orders}</code>\n"
+            f"└ Сегодня: <code>{today_orders}</code>\n\n"
+
+            f"💰 <b>Балансы:</b>\n"
+            f"└ Сумма на счетах: <code>{total_balance} ₽</code>\n\n"
+
+            f"🕒 <i>Обновлено: {datetime.now().strftime('%d.%m.%Y %H:%M')}</i>"
+        )
+
+        await message.answer(stat_text, parse_mode="HTML")
+
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 # --- 1. НАЖАТИЕ НА КНОПКУ "ПОЛУЧИТЬ БЕСПЛАТНО" ---
 # Если используешь Inline кнопку:
 @router.callback_query(F.data == "gamble_select_item")
