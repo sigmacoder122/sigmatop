@@ -1931,48 +1931,44 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import app.database.requests as rq
 
-
-# Добавляем состояние для рассылки
-class BroadcastStates(StatesGroup):
-    waiting_broadcast_text = State()
-    confirm_broadcast = State()  # 👈 Добавлено новое состояние
-
-
-# Обработчик команды /all (только для админа)
 import asyncio
+from aiogram import Router, F
+from aiogram.types import Message
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 
+import app.database.requests as rq  # Твой файл с запросами к БД
 
-# ... (импорты и начало роутера)
+# Предположим, ADMIN_ID импортируется из конфига
+# from config import ADMIN_ID
 
-@router.message(BroadcastStates.waiting_broadcast_text, F.from_user.id == ADMIN_ID)
-async def process_broadcast_text(message: Message, state: FSMContext):
-    # ИСПОЛЬЗУЕМ html_text ВМЕСТО text ДЛЯ СОХРАНЕНИЯ ТЕГОВ
-    broadcast_text = message.html_text
+router = Router()
 
+
+class BroadcastStates(StatesGroup):
+    waiting_broadcast_text = State()
+    confirm_broadcast = State()
+
+
+# 1. Стартуем рассылку
+@router.message(Command("all"), F.from_user.id == ADMIN_ID)
+async def broadcast_command(message: Message, state: FSMContext):
     users = await rq.get_all_users()
-    total_users = len(users)
-
-    await state.update_data(broadcast_text=broadcast_text)
 
     await message.answer(
-        f"📋 <b>Предпросмотр рассылки:</b>\n\n"
-        f"{broadcast_text}\n\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"👥 Всего потенциальных получателей: <b>{total_users}</b>\n"
-        f"❓ Отправить рассылку? (да/нет)",
+        f"📊 Всего пользователей в базе: <b>{len(users)}</b>\n\n"
+        f"✍️ Введите текст для рассылки (теги HTML сохранятся):",
         parse_mode="HTML"
     )
-    await state.set_state(BroadcastStates.confirm_broadcast)
+    await state.set_state(BroadcastStates.waiting_broadcast_text)
 
 
-# В начале файла с хендлерами добавь импорт исключения
-from aiogram.exceptions import TelegramForbiddenError
-
-
+# 2. Получаем текст и показываем превью
 @router.message(BroadcastStates.waiting_broadcast_text, F.from_user.id == ADMIN_ID)
 async def process_broadcast_text(message: Message, state: FSMContext):
-    # ВАЖНО: используем html_text, чтобы сохранить жирный, курсив и т.д.
+    # .html_text сохраняет все жирные шрифты, ссылки и курсив
     broadcast_text = message.html_text
 
     users = await rq.get_all_users()
@@ -1980,17 +1976,19 @@ async def process_broadcast_text(message: Message, state: FSMContext):
 
     await message.answer(
         f"📋 <b>Предпросмотр:</b>\n\n{broadcast_text}\n\n"
-        f"👥 Получателей в базе: <b>{len(users)}</b>\n"
-        f"❓ Отправить? (да/нет)",
+        f"━━━━━━━━━━━━━━━━\n"
+        f"👥 Получателей в очереди: <b>{len(users)}</b>\n"
+        f"❓ Отправить рассылку? (да/нет)",
         parse_mode="HTML"
     )
     await state.set_state(BroadcastStates.confirm_broadcast)
 
 
+# 3. Сама рассылка с очисткой базы
 @router.message(BroadcastStates.confirm_broadcast, F.from_user.id == ADMIN_ID)
 async def confirm_broadcast(message: Message, state: FSMContext):
-    if message.text.lower() not in ["да", "yes", "ок"]:
-        await message.answer("❌ Отменено")
+    if message.text.lower() not in ["да", "yes", "ок", "ok", "lf"]:
+        await message.answer("❌ Рассылка отменена пользователем.")
         await state.clear()
         return
 
@@ -1998,30 +1996,52 @@ async def confirm_broadcast(message: Message, state: FSMContext):
     text = data.get('broadcast_text')
     users = await rq.get_all_users()
 
-    status_msg = await message.answer("🔄 Начинаю...")
-    success, deleted = 0, 0
+    status_msg = await message.answer("🔄 Рассылка запущена... Это может занять время.")
+
+    success_count = 0
+    deleted_count = 0
 
     for user in users:
         try:
-            await message.bot.send_message(user.tg_id, text, parse_mode="HTML")
-            success += 1
+            await message.bot.send_message(
+                chat_id=user.tg_id,
+                text=text,
+                parse_mode="HTML"
+            )
+            success_count += 1
+            # Спим 0.05 сек, чтобы не превышать лимит 30 сообщений/сек
+            await asyncio.sleep(0.05)
+
         except TelegramForbiddenError:
-            # Тот самый момент: удаляем пользователя, если он заблокировал бота
+            # Пользователь заблокировал бота — удаляем его из БД
             await rq.delete_user(user.tg_id)
-            deleted += 1
+            deleted_count += 1
+
+        except TelegramRetryAfter as e:
+            # Если словили Flood Limit, ждем сколько просит API
+            await asyncio.sleep(e.retry_after)
+            # Можно попробовать отправить еще раз или пропустить
+
         except Exception as e:
-            print(f"Ошибка на {user.tg_id}: {e}")
+            print(f"Непредвиденная ошибка на ID {user.tg_id}: {e}")
 
-        # Обновляем статус каждые 10 чел, чтобы админ не скучал
-        if (success + deleted) % 10 == 0:
-            await status_msg.edit_text(f"⏳ Прогресс: {success + deleted}/{len(users)}")
+        # Обновляем сообщение статуса каждые 15 сообщений
+        if (success_count + deleted_count) % 15 == 0:
+            try:
+                await status_msg.edit_text(
+                    f"⏳ Прогресс: {success_count + deleted_count}/{len(users)}\n"
+                    f"✅ Успешно: {success_count} | 🗑 Удалено: {deleted_count}"
+                )
+            except:
+                pass
 
+    # Финальный отчет
     await status_msg.edit_text(
-        f"✅ <b>Готово!</b>\n\n"
-        f"📈 Успешно: <b>{success}</b>\n"
-        f"🗑 Удалено неактивных: <b>{deleted}</b>\n"
-        f"💎 Актуальная база: <b>{len(users) - deleted}</b>",
+        f"✅ <b>Рассылка завершена</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"📈 Успешно получили: <b>{success_count}</b>\n"
+        f"🗑 Удалено (бан бота): <b>{deleted_count}</b>\n"
+        f"💎 Актуальных юзеров в базе: <b>{len(users) - deleted_count}</b>",
         parse_mode="HTML"
     )
     await state.clear()
-
