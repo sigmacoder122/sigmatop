@@ -102,7 +102,3 @@ async def get_items_by_category_paginated(category_id, limit=12, offset=0):
         )
         return result.all()
 
-async def delete_user(tg_id: int):
-    async with async_session() as session:
-        await session.execute(delete(User).where(User.tg_id == tg_id))
-        await session.commit()
