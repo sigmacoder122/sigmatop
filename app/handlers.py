@@ -23,14 +23,7 @@ PROMO_CODE = "ильяпидор.ком"  # Действующий промок�
 PROMO_DISCOUNT = 0.1
 API_TOKEN = '8442407027:AAGvxbLeWbzSjNIuVXHL-iFuUG05gViU8bs'
 bot = Bot(token=API_TOKEN)
-from aiogram.fsm.state import State, StatesGroup
 
-class BroadcastStates(StatesGroup):
-    waiting_broadcast_text = State()
-    confirm_broadcast = State()
-
-class PromoStates(StatesGroup):
-    waiting_promo = State()
 class InfoStates(StatesGroup):
     waiting_info = State()
 # Добавляем состояние для капчи
@@ -1938,71 +1931,24 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import app.database.requests as rq
 
-import asyncio
-from aiogram import Router, F
-from aiogram.types import Message
-from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 
-import app.database.requests as rq  # Твой файл с запросами к БД
-
-# Предположим, ADMIN_ID импортируется из конфига
-# from config import ADMIN_ID
-
-router = Router()
-
-
+# Добавляем состояние для рассылки
 class BroadcastStates(StatesGroup):
     waiting_broadcast_text = State()
-    confirm_broadcast = State()
+    confirm_broadcast = State()  # 👈 Добавлено новое состояние
 
 
-# 1. Стартуем рассылку
-import asyncio
-from aiogram import Router, F
-from aiogram.types import Message
-from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
-
-import app.database.requests as rq
-
-# Сюда нужно добавить импорт твоих конфигов, например:
-# from config import ADMIN_ID, PROMO_CODE
-
-router = Router()
-
-
-# --- БЛОК ПРОМОКОДОВ ---
-
-@router.message(PromoStates.waiting_promo)
-async def check_promo(message: Message, state: FSMContext):
-    user_input = message.text.strip().lower()
-    # Замени PROMO_CODE на реальную переменную или строку
-    valid_promos = ['alfastars']
-
-    if user_input in valid_promos:
-        await state.update_data(promo_applied=True)
-        await message.answer(
-            "<b>✅ ПРОМОКОД АКТИВИРОВАН</b>\n\n"
-            "<blockquote>💳 Ваша скидка: <b>10%</b>\n"
-            "📌 Статус: <b>Применится при следующей оплате</b></blockquote>",
-            parse_mode="HTML"
-        )
-        await state.clear()
-    else:
-        await message.answer("<b>❌ ОШИБКА АКТИВАЦИИ</b>\nПопробуйте еще раз.")
-
-
-# --- БЛОК РАССЫЛКИ ---
-
+# Обработчик команды /all (только для админа)
 @router.message(Command("all"), F.from_user.id == ADMIN_ID)
 async def broadcast_command(message: Message, state: FSMContext):
+    # Получаем количество пользователей перед рассылкой
     users = await rq.get_all_users()
+    total_users = len(users)
+
     await message.answer(
-        f"📊 Всего пользователей: <b>{len(users)}</b>\nВведите текст для рассылки:",
+        f"📊 Всего пользователей в базе: <b>{total_users}</b>\n\n"
+        f"✍️ Введите текст для рассылки:\n"
+        f"<i>Поддерживается HTML-разметка: жирный текст, курсив, спойлеры и т.д.</i>",
         parse_mode="HTML"
     )
     await state.set_state(BroadcastStates.waiting_broadcast_text)
@@ -2010,13 +1956,19 @@ async def broadcast_command(message: Message, state: FSMContext):
 
 @router.message(BroadcastStates.waiting_broadcast_text, F.from_user.id == ADMIN_ID)
 async def process_broadcast_text(message: Message, state: FSMContext):
-    broadcast_text = message.html_text  # Сохраняем разметку
+    broadcast_text = message.text
     users = await rq.get_all_users()
+    total_users = len(users)
+
+    # Сохраняем текст и переходим в состояние подтверждения
     await state.update_data(broadcast_text=broadcast_text)
 
+    # Показываем превью с форматированием
     await message.answer(
-        f"📋 <b>Предпросмотр:</b>\n\n{broadcast_text}\n\n"
-        f"👥 Получателей: <b>{len(users)}</b>\nОтправить? (да/нет)",
+        f"📋 <b>Предпросмотр рассылки:</b>\n\n"
+        f"{broadcast_text}\n\n"
+        f"👥 Всего пользователей: <b>{total_users}</b>\n"
+        f"❓ Отправить рассылку? (да/нет)",
         parse_mode="HTML"
     )
     await state.set_state(BroadcastStates.confirm_broadcast)
@@ -2024,33 +1976,49 @@ async def process_broadcast_text(message: Message, state: FSMContext):
 
 @router.message(BroadcastStates.confirm_broadcast, F.from_user.id == ADMIN_ID)
 async def confirm_broadcast(message: Message, state: FSMContext):
-    if message.text.lower() not in ["да", "yes", "ок", "ok", "lf"]:
+    if message.text.lower() not in ["да", "lf", "yes", "ок", "ok"]:
         await message.answer("❌ Рассылка отменена")
         await state.clear()
         return
 
     data = await state.get_data()
-    text = data.get('broadcast_text')
+    broadcast_text = data.get('broadcast_text')
     users = await rq.get_all_users()
 
-    status_msg = await message.answer("🔄 Рассылка запущена...")
-    success, deleted = 0, 0
+    # Отправляем сообщение о начале
+    status_msg = await message.answer("🔄 Начинаю рассылку...")
+
+    success_count = 0
+    fail_count = 0
 
     for user in users:
         try:
-            await message.bot.send_message(user.tg_id, text, parse_mode="HTML")
-            success += 1
-            await asyncio.sleep(0.05)
-        except TelegramForbiddenError:
-            await rq.delete_user(user.tg_id)  # Удаление неактивного
-            deleted += 1
-        except Exception:
-            pass
+            # Отправляем с HTML-разметкой
+            await message.bot.send_message(
+                user.tg_id,
+                broadcast_text,
+                parse_mode="HTML"
+            )
+            success_count += 1
 
+            # Обновляем статус каждые 10 сообщений
+            if success_count % 10 == 0:
+                await status_msg.edit_text(
+                    f"🔄 Прогресс: {success_count}/{len(users)}"
+                )
+
+        except Exception as e:
+            print(f"Ошибка отправки пользователю {user.tg_id}: {e}")
+            fail_count += 1
+
+    # Финальный отчет
     await status_msg.edit_text(
-        f"✅ <b>Завершено!</b>\n"
-        f"📈 Успешно: {success}\n"
-        f"🗑 Удалено (бан): {deleted}",
+        f"✅ <b>Рассылка завершена</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"👥 Всего пользователей: <b>{len(users)}</b>\n"
+        f"✅ Успешно отправлено: <b>{success_count}</b>\n"
+        f"❌ Ошибок: <b>{fail_count}</b>",
         parse_mode="HTML"
     )
     await state.clear()
+
