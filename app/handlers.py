@@ -23,7 +23,14 @@ PROMO_CODE = "ильяпидор.ком"  # Действующий промок�
 PROMO_DISCOUNT = 0.1
 API_TOKEN = '8442407027:AAGvxbLeWbzSjNIuVXHL-iFuUG05gViU8bs'
 bot = Bot(token=API_TOKEN)
+from aiogram.fsm.state import State, StatesGroup
 
+class BroadcastStates(StatesGroup):
+    waiting_broadcast_text = State()
+    confirm_broadcast = State()
+
+class PromoStates(StatesGroup):
+    waiting_promo = State()
 class InfoStates(StatesGroup):
     waiting_info = State()
 # Добавляем состояние для капчи
@@ -1953,42 +1960,72 @@ class BroadcastStates(StatesGroup):
 
 
 # 1. Стартуем рассылку
+import asyncio
+from aiogram import Router, F
+from aiogram.types import Message
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
+
+import app.database.requests as rq
+
+# Сюда нужно добавить импорт твоих конфигов, например:
+# from config import ADMIN_ID, PROMO_CODE
+
+router = Router()
+
+
+# --- БЛОК ПРОМОКОДОВ ---
+
+@router.message(PromoStates.waiting_promo)
+async def check_promo(message: Message, state: FSMContext):
+    user_input = message.text.strip().lower()
+    # Замени PROMO_CODE на реальную переменную или строку
+    valid_promos = ['alfastars']
+
+    if user_input in valid_promos:
+        await state.update_data(promo_applied=True)
+        await message.answer(
+            "<b>✅ ПРОМОКОД АКТИВИРОВАН</b>\n\n"
+            "<blockquote>💳 Ваша скидка: <b>10%</b>\n"
+            "📌 Статус: <b>Применится при следующей оплате</b></blockquote>",
+            parse_mode="HTML"
+        )
+        await state.clear()
+    else:
+        await message.answer("<b>❌ ОШИБКА АКТИВАЦИИ</b>\nПопробуйте еще раз.")
+
+
+# --- БЛОК РАССЫЛКИ ---
+
 @router.message(Command("all"), F.from_user.id == ADMIN_ID)
 async def broadcast_command(message: Message, state: FSMContext):
     users = await rq.get_all_users()
-
     await message.answer(
-        f"📊 Всего пользователей в базе: <b>{len(users)}</b>\n\n"
-        f"✍️ Введите текст для рассылки (теги HTML сохранятся):",
+        f"📊 Всего пользователей: <b>{len(users)}</b>\nВведите текст для рассылки:",
         parse_mode="HTML"
     )
     await state.set_state(BroadcastStates.waiting_broadcast_text)
 
 
-# 2. Получаем текст и показываем превью
 @router.message(BroadcastStates.waiting_broadcast_text, F.from_user.id == ADMIN_ID)
 async def process_broadcast_text(message: Message, state: FSMContext):
-    # .html_text сохраняет все жирные шрифты, ссылки и курсив
-    broadcast_text = message.html_text
-
+    broadcast_text = message.html_text  # Сохраняем разметку
     users = await rq.get_all_users()
     await state.update_data(broadcast_text=broadcast_text)
 
     await message.answer(
         f"📋 <b>Предпросмотр:</b>\n\n{broadcast_text}\n\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"👥 Получателей в очереди: <b>{len(users)}</b>\n"
-        f"❓ Отправить рассылку? (да/нет)",
+        f"👥 Получателей: <b>{len(users)}</b>\nОтправить? (да/нет)",
         parse_mode="HTML"
     )
     await state.set_state(BroadcastStates.confirm_broadcast)
 
 
-# 3. Сама рассылка с очисткой базы
 @router.message(BroadcastStates.confirm_broadcast, F.from_user.id == ADMIN_ID)
 async def confirm_broadcast(message: Message, state: FSMContext):
     if message.text.lower() not in ["да", "yes", "ок", "ok", "lf"]:
-        await message.answer("❌ Рассылка отменена пользователем.")
+        await message.answer("❌ Рассылка отменена")
         await state.clear()
         return
 
@@ -1996,52 +2033,24 @@ async def confirm_broadcast(message: Message, state: FSMContext):
     text = data.get('broadcast_text')
     users = await rq.get_all_users()
 
-    status_msg = await message.answer("🔄 Рассылка запущена... Это может занять время.")
-
-    success_count = 0
-    deleted_count = 0
+    status_msg = await message.answer("🔄 Рассылка запущена...")
+    success, deleted = 0, 0
 
     for user in users:
         try:
-            await message.bot.send_message(
-                chat_id=user.tg_id,
-                text=text,
-                parse_mode="HTML"
-            )
-            success_count += 1
-            # Спим 0.05 сек, чтобы не превышать лимит 30 сообщений/сек
+            await message.bot.send_message(user.tg_id, text, parse_mode="HTML")
+            success += 1
             await asyncio.sleep(0.05)
-
         except TelegramForbiddenError:
-            # Пользователь заблокировал бота — удаляем его из БД
-            await rq.delete_user(user.tg_id)
-            deleted_count += 1
+            await rq.delete_user(user.tg_id)  # Удаление неактивного
+            deleted += 1
+        except Exception:
+            pass
 
-        except TelegramRetryAfter as e:
-            # Если словили Flood Limit, ждем сколько просит API
-            await asyncio.sleep(e.retry_after)
-            # Можно попробовать отправить еще раз или пропустить
-
-        except Exception as e:
-            print(f"Непредвиденная ошибка на ID {user.tg_id}: {e}")
-
-        # Обновляем сообщение статуса каждые 15 сообщений
-        if (success_count + deleted_count) % 15 == 0:
-            try:
-                await status_msg.edit_text(
-                    f"⏳ Прогресс: {success_count + deleted_count}/{len(users)}\n"
-                    f"✅ Успешно: {success_count} | 🗑 Удалено: {deleted_count}"
-                )
-            except:
-                pass
-
-    # Финальный отчет
     await status_msg.edit_text(
-        f"✅ <b>Рассылка завершена</b>\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"📈 Успешно получили: <b>{success_count}</b>\n"
-        f"🗑 Удалено (бан бота): <b>{deleted_count}</b>\n"
-        f"💎 Актуальных юзеров в базе: <b>{len(users) - deleted_count}</b>",
+        f"✅ <b>Завершено!</b>\n"
+        f"📈 Успешно: {success}\n"
+        f"🗑 Удалено (бан): {deleted}",
         parse_mode="HTML"
     )
     await state.clear()
