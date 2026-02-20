@@ -79,6 +79,8 @@ async def catigories():
 
 from app.database.requests import get_items_by_category, get_total_items_count
 
+import random  # Обязательно добавь этот импорт в начало файла, если его еще нет
+
 
 async def items(category_id, page=0, sort_mode="asc"):
     items_per_page = 10
@@ -92,12 +94,16 @@ async def items(category_id, page=0, sort_mode="asc"):
     keyboard = InlineKeyboardBuilder()
 
     for item in all_items:
+        # Генерируем случайное количество от 59 до 219
+        qty = random.randint(59, 219)
+
         keyboard.add(InlineKeyboardButton(
-            text=f"{item.name}•{int(item.price)}₽",
+            text=f"{item.name} • {int(item.price)}₽ • {qty} шт.",
             callback_data=f'item_{item.id}'
         ))
 
-    keyboard.adjust(2)
+    # Изменяем на 1, чтобы товары выводились по одному в строке
+    keyboard.adjust(1)
 
     # Кнопка сортировки
     sort_icon = "⬇️" if sort_mode == "asc" else "⬆️"
