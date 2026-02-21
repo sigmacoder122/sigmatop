@@ -1456,6 +1456,10 @@ async def info_callback(callback: CallbackQuery):
     await callback.message.edit_media(
         media=new_media,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            # Добавляем кнопки с URL-ссылками
+            [InlineKeyboardButton(text="📜 Пользовательское соглашение", url="https://telegra.ph/Polzovatelskoe-soglashenie-08-15-10")],
+            [InlineKeyboardButton(text="🔒 Политика конфиденциальности", url="https://telegra.ph/Politika-konfidencialnosti-08-15-17")],
+            # Кнопка "Назад" остается внизу
             [InlineKeyboardButton(text="🔙 Назад", callback_data="main")]
         ])
     )
