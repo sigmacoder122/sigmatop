@@ -1885,7 +1885,8 @@ async def cancel_promo(callback: CallbackQuery, state: FSMContext):
         "<blockquote>Лучшие Telegram аккаунты для ваших целей:\n"
         "• Высокая отлежка\n"
         "• Чистые прокси\n"
-        "• Форматы Session + TData</blockquote>\n\n"
+        "• За оптом в поддержку\n"
+        "• Форматы Номер + код</blockquote>\n\n"
         "<b>⚡️ Выберите нужный раздел ниже:</b>"
     )
 
