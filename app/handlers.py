@@ -212,7 +212,7 @@ async def process_captcha(callback: CallbackQuery, state: FSMContext):
         # 3. Отправляем нижнюю клавиатуру
         await callback.message.answer(
             text="✅ <b>Верификация успешно пройдена!</b>\nМеню доступно внизу.",
-            reply_markup=kb.main_reply_keyboard(),
+
             parse_mode="HTML"
         )
 

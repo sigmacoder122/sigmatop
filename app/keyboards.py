@@ -2,14 +2,6 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardBut
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.database.requests import get_catigories, get_item
 from aiogram.types import LabeledPrice, Message
-def main_reply_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🎁 Бесплатный аккаунт")]  # <--- ВОТ ЭТА КНОПКА
-        ],
-        resize_keyboard=True, # Делает кнопки аккуратными
-        input_field_placeholder="Выберите пункт меню..."
-    )
 def main_menu():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📂 Категории", callback_data="catalog")],
