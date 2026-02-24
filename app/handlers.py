@@ -92,8 +92,7 @@ async def main_menu(callback: CallbackQuery):
 
 # Инициализируем пустое множество для хранения ID проверенных пользователей
 verified_users = set()
-class BonusStates(StatesGroup):
-    waiting_for_bonus = State()
+
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -196,54 +195,49 @@ async def check_subscription(callback: CallbackQuery, bot: Bot, state: FSMContex
         logging.error(f"Subscription check error: {e}")
         await callback.answer("⚠️ Ошибка проверки подписки, попробуйте позже", show_alert=True)
 
+
 @router.callback_query(CaptchaStates.waiting_captcha, F.data.startswith("check_"))
 async def process_captcha(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
     correct_emoji = user_data.get("correct_emoji")
+
+    # Защита от ошибок, если данных в state почему-то нет
+    if not correct_emoji:
+        await callback.answer("⚠️ Ошибка сессии. Введите /start заново.", show_alert=True)
+        return await state.clear()
+
     selected_emoji = callback.data.split("_")[1]
 
     if selected_emoji == correct_emoji:
-        # 1. Сразу убираем загрузку и мигание
-        await callback.answer("Успешно!")
+        # 1. Моментально отвечаем Telegram, чтобы убрать "часики" загрузки
+        await callback.answer("✅ Верификация пройдена!")
 
-        # 2. Добавляем в белый список
+        # 2. Заносим в базу проверенных и очищаем состояние
         verified_users.add(callback.from_user.id)
+        await state.clear()
 
-        # 3. Отправляем нижнюю клавиатуру
-        await callback.message.answer(
-            text="✅ <b>Верификация успешно пройдена!</b>\nМеню доступно внизу.",
-
-            parse_mode="HTML"
+        # 3. Текст главного меню
+        main_text = (
+            "<b>🔐 ДОБРО ПОЖАЛОВАТЬ</b>\n\n"
+            "<blockquote>Лучшие Telegram-аккаунты для ваших целей.\n"
+            "Выбирайте нужную категорию в меню ниже.</blockquote>\n\n"
+            "<b>📢 Новости:</b> @eelge"
         )
 
-        # 4. Переходим к бонусной игре
-        await state.set_state(BonusStates.waiting_for_bonus)
+        # 4. Редактируем текущее сообщение (капчу), превращая его в главное меню.
+        # Это работает быстрее и не спамит новыми сообщениями в чат.
+        try:
+            await callback.message.edit_caption(
+                caption=main_text,
+                reply_markup=kb.settings(),
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logging.error(f"Failed to edit captcha message: {e}")
 
-        # Генерируем сетку 3х3
-        keyboard = []
-        for i in range(3):
-            row = []
-            for j in range(3):
-                row.append(InlineKeyboardButton(text="🎁", callback_data=f"bonus_{i * 3 + j}"))
-            keyboard.append(row)
-
-        bonus_kb = InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-        bonus_text = (
-            "<b>🎉 СЮРПРИЗ!</b>\n\n"
-            "<blockquote>В честь знакомства мы дарим вам <b>бонус</b>!\n"
-            "Выберите один из квадратов, чтобы получить приз на баланс:</blockquote>"
-        )
-
-        # 5. Меняем сообщение
-        await callback.message.edit_caption(
-            caption=bonus_text,
-            reply_markup=bonus_kb,
-            parse_mode="HTML"
-        )
     else:
-        # Для неверного ответа answer уже есть, он уберет загрузку и покажет алерт
-        await callback.answer("⚠️ Неверно! Попробуйте еще раз.", show_alert=True)
+        # Если неверно, показываем уведомление и ждем новую попытку
+        await callback.answer("⚠️ Неверный эмодзи! Попробуйте еще раз.", show_alert=True)
 
 
 # Обрабатываем текст кнопки "🎁 Испытать удачу"
@@ -273,40 +267,7 @@ async def gamble_start(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
     await state.set_state(StarGameStates.selecting_item)
-@router.callback_query(BonusStates.waiting_for_bonus, F.data.startswith("bonus_"))
-async def get_bonus_result(callback: CallbackQuery, state: FSMContext):
-    # Список возможных призов
-    prizes = [
-        "💰 30 RUB на баланс",
-        "🎫 Скидка 10% на первый заказ",
-        "🔥 Скидка 5% на любой товар",
-        "💸 Кешбэк 15% на следующую покупку",
-        "💰 15 RUB на баланс",
-        "📦 Бесплатный тестовый аккаунт после покупки первого",
-        "🍀 Удача! Скидка 20%"
-    ]
 
-    # Выбираем случайный приз
-    won_prize = random.choice(prizes)
-
-    await state.clear()
-    await callback.answer(f"🎁 Вы выиграли: {won_prize}", show_alert=True)
-
-    # Итоговый текст после выигрыша
-    main_text = (
-        f"<b>🔐 ГЛАВНОЕ МЕНЮ</b>\n\n"
-        f"🎁 <b>Ваш бонус:</b> {won_prize}\n"
-        "<blockquote>Лучшие Telegram-аккаунты для ваших целей.\n"
-        "Выбирайте нужную категорию в меню ниже.</blockquote>\n\n"
-        "<b>📢 Новости:</b> @eelge"
-    )
-
-    # Переходим в главное меню
-    await callback.message.edit_caption(
-        caption=main_text,
-        reply_markup=kb.settings(),
-        parse_mode="HTML"
-    )
 
 
 # Вспомогательная функция для показа меню (чтобы не дублировать код в Start)
@@ -656,9 +617,9 @@ async def send_gamble_invoice(callback: CallbackQuery, state: FSMContext):
 
 # --- 5. ПРОВЕРКА И БРОСОК (ЭТАПЫ ОПЛАТЫ) ---
 @router.pre_checkout_query()
-async def gamble_pre_checkout(query: PreCheckoutQuery):
-    await query.answer(ok=True)
-
+async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
+    # Этот хэндлер будет отвечать "ОК" на ЛЮБЫЕ платежи (и игры, и покупки)
+    await pre_checkout_query.answer(ok=True)
 
 @router.message(F.successful_payment)
 async def gamble_payment_success(message: Message):
@@ -748,9 +709,6 @@ async def pay_with_stars(callback: CallbackQuery, state: FSMContext):
         await callback.answer("⚠️ Ошибка при создании платежа")
 
 
-@router.pre_checkout_query()
-async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
-    await pre_checkout_query.answer(ok=True)
 
 
 @router.callback_query(F.data == "purchase_history")
@@ -987,10 +945,6 @@ async def send_stars_invoice(callback: CallbackQuery, state: FSMContext):
 
 
 # --- 5. ПОДТВЕРЖДЕНИЕ ПЕРЕД ОПЛАТОЙ (Pre-Checkout) ---
-@router.pre_checkout_query()
-async def on_pre_checkout(pre_checkout_query: PreCheckoutQuery):
-    # Всегда отвечаем OK, если готовы принять оплату
-    await pre_checkout_query.answer(ok=True)
 import json
 import asyncio
 from aiogram.types import LabeledPrice, PreCheckoutQuery, ContentType
