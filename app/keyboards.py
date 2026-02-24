@@ -7,7 +7,7 @@ def main_menu():
         [InlineKeyboardButton(text="📂 Категории", callback_data="catalog")],
         [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
         # --- ВОТ ТВОЯ КНОПКА ---
-        [InlineKeyboardButton(text="🎁 ПОЛУЧИТЬ АККАУНТ БЕСПЛАТНО", callback_data="gamble_select_item")],
+
         # -----------------------
         [InlineKeyboardButton(text="ℹ️ Поддержка", callback_data="support")]
     ])
@@ -17,7 +17,7 @@ def main_menu():
 def reply_main_menu():
     keyboard = ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="📂 Категории"), KeyboardButton(text="👤 Профиль")],
-        [KeyboardButton(text="🎁 Получить аккаунт бесплатно")] # Обрабатываем по тексту
+
     ], resize_keyboard=True)
     return keyboard
 main = ReplyKeyboardMarkup(keyboard=[
