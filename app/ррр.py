@@ -1,23 +1,20 @@
 n, m = map(int, input().split())
-a = []
-for i in range(n):
-    r = list(map(int, input().split()))
-    a +=[r]
-k = int(input())
+ma = [list(map(int, input().split())) for i in range(n)]
 
-ans = 0
+count = 0
+
 for i in range(n):
-    count = 0
+    mini = min(ma[i])
     for j in range(m):
-        if a[i][j] == 0:
-            count += 1
-        else:
-            count = 0
-        if count >= k:
-            ans = i + 1
-    if ans > 0:
-        print(ans)
-        ans = -1
+        if ma[i][j] == mini:
+            maxi = ma[0][j]
+            for k in range(1, n):
+                if ma[k][j] > maxi:
+                    maxi = ma[k][j]
 
-if ans == 0:
+            if ma[i][j] == maxi:
+                print(i + 1, j + 1)
+                count += 1
+
+if count == 0:
     print(0)
