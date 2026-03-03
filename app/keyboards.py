@@ -125,11 +125,18 @@ async def items(category_id, page=0, sort_mode="asc"):
 
     return keyboard.as_markup()
 
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardButton
+
 async def payment_methods(item_id, category_id):
     keyboard = InlineKeyboardBuilder()
     keyboard.add(
         InlineKeyboardButton(text='Telegram Stars 🌟', callback_data=f'pay_stars_{item_id}'),
         InlineKeyboardButton(text='Crypto Bot/USDT', callback_data=f'pay_crypto_{item_id}')
+    )
+    # ДОБАВЛЯЕМ НОВУЮ КНОПКУ:
+    keyboard.row(
+        InlineKeyboardButton(text='Банковская карта / СБП 💳', callback_data=f'pay_card_{item_id}')
     )
     keyboard.row(InlineKeyboardButton(
         text='Назад к товарам↩️ ',
