@@ -12,7 +12,23 @@ from app.handlers import router
 from app.database.models import async_main
 from app.middlewares import SubscriptionMiddleware
 
+import asyncio
+import aiohttp
 
+async def self_ping():
+    """Пинг самого себя каждые 10 минут, чтобы не засыпать"""
+    url = "https://sigmatop.onrender.com"
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    logging.info(f"Self-ping: {resp.status}")
+        except Exception as e:
+            logging.error(f"Self-ping error: {e}")
+        await asyncio.sleep(10)  # 10 минут
+
+# Добавьте это в main() перед start_polling:
+asyncio.create_task(self_ping())
 # ПРОСТАЯ ЗАГЛУШКА ДЛЯ ВСЕХ ЗАПРОСОВ
 async def handle_all_requests(request):
     """
