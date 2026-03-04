@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import aiohttp  # Один импорт
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher
@@ -12,8 +13,6 @@ from app.handlers import router
 from app.database.models import async_main
 from app.middlewares import SubscriptionMiddleware
 
-import asyncio
-import aiohttp
 
 async def self_ping():
     """Пинг самого себя каждые 10 минут, чтобы не засыпать"""
@@ -25,10 +24,9 @@ async def self_ping():
                     logging.info(f"Self-ping: {resp.status}")
         except Exception as e:
             logging.error(f"Self-ping error: {e}")
-        await asyncio.sleep(10)  # 10 минут
+        await asyncio.sleep(600)  # 600 = 10 минут (у вас было 10 секунд!)
 
-# Добавьте это в main() перед start_polling:
-asyncio.create_task(self_ping())
+
 # ПРОСТАЯ ЗАГЛУШКА ДЛЯ ВСЕХ ЗАПРОСОВ
 async def handle_all_requests(request):
     """
@@ -54,6 +52,9 @@ async def main():
         default=DefaultBotProperties(parse_mode="HTML")
     )
 
+    # 🔥 ВАЖНО: сбрасываем вебхуки
+    await bot.delete_webhook(drop_pending_updates=True)
+
     dp = Dispatcher()
 
     # Регистрация мидлварей
@@ -65,26 +66,21 @@ async def main():
 
     await set_commands(bot)
 
-    # === МИНИМАЛЬНЫЙ ВЕБ-СЕРВЕР ДЛЯ RENDER ===
+    # === ВЕБ-СЕРВЕР-ЗАГЛУШКА ===
     app = web.Application()
-
-    # Универсальный обработчик для ЛЮБОГО пути
-    # Это заглушка - она отвечает на все запросы, включая проверки Render
     app.router.add_route('*', '/{tail:.*}', handle_all_requests)
 
     runner = web.AppRunner(app)
     await runner.setup()
 
-    # Берем порт из переменной окружения Render
     port = int(os.environ.get('PORT', 8080))
-
-    # Запускаем сервер
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     logging.info(f"🌐 Сервер-заглушка запущен на порту {port}")
-    logging.info("   📍 Render теперь видит открытый порт и не выдает ошибок")
-    logging.info("   📍 Вебхуки Platega пока отключены (заглушка)")
-    # ==========================================
+
+    # === ЗАПУСК САМОПИНГА ===
+    asyncio.create_task(self_ping())
+    logging.info("🔄 Самопинг запущен (каждые 10 минут)")
 
     # Запуск поллинга бота
     logging.info("🤖 Бот начал поллинг сообщений...")
