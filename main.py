@@ -1,7 +1,8 @@
 import asyncio
 import logging
 import os
-import aiohttp  # Один импорт
+import sys  # Добавлен для запуска второго файла
+import aiohttp
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher
@@ -24,7 +25,7 @@ async def self_ping():
                     logging.info(f"Self-ping: {resp.status}")
         except Exception as e:
             logging.error(f"Self-ping error: {e}")
-        await asyncio.sleep(600)  # 600 = 10 минут (у вас было 10 секунд!)
+        await asyncio.sleep(600)
 
 
 # ПРОСТАЯ ЗАГЛУШКА ДЛЯ ВСЕХ ЗАПРОСОВ
@@ -41,6 +42,30 @@ async def set_commands(bot: Bot):
         BotCommand(command="start", description="🚀 Запустить бота / Главное меню")
     ]
     await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+
+
+# ФУНКЦИЯ ДЛЯ ЗАПУСКА ВТОРОГО БОТА (ppp.py)
+async def run_ppp_bot():
+    """Фоновый запуск скрипта ppp.py"""
+    logging.info("🚀 Запускаем второго бота (ppp.py)...")
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, 'ppp.py',
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+
+    # Функция для перехвата и вывода логов от ppp.py
+    async def read_stream(stream, prefix):
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            # Выводим логи ppp.py с пометкой [PPP]
+            print(f"{prefix}: {line.decode('utf-8').strip()}")
+
+    # Читаем обычные логи и ошибки
+    asyncio.create_task(read_stream(process.stdout, "🏀 [PPP LOG]"))
+    asyncio.create_task(read_stream(process.stderr, "❌ [PPP ERROR]"))
 
 
 async def main():
@@ -82,8 +107,11 @@ async def main():
     asyncio.create_task(self_ping())
     logging.info("🔄 Самопинг запущен (каждые 10 минут)")
 
-    # Запуск поллинга бота
-    logging.info("🤖 Бот начал поллинг сообщений...")
+    # === ЗАПУСК ВТОРОГО БОТА ===
+    asyncio.create_task(run_ppp_bot())
+
+    # Запуск поллинга основного бота
+    logging.info("🤖 Основной бот начал поллинг сообщений...")
     await dp.start_polling(bot)
 
 
