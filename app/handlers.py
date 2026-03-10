@@ -23,7 +23,7 @@ from aiogram.fsm.state import State, StatesGroup
 CHANNEL_ID = "@eelge"
 PROMO_CODE = "ильяпидор.ком"  # Действующий промокод
 PROMO_DISCOUNT = 0.1
-API_TOKEN = '8442407027:AAGvxbLeWbzSjNIuVXHL-iFuUG05gViU8bs'
+API_TOKEN = '8442407027:AAHrzmYyqlMYwOQMcIdxZIxhHzmo5G24cOs'
 bot = Bot(token=API_TOKEN)
 PLATEGA_API_URL = 'https://app.platega.io/transaction/process'
 MERCHANT_ID = 'de2ca737-2c78-4f6b-b213-8179c25ea4bf'

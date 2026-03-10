@@ -46,41 +46,10 @@ async def set_commands(bot: Bot):
 
 # ФУНКЦИЯ ДЛЯ ЗАПУСКА ВТОРОГО БОТА (ppp.py)
 # ФУНКЦИЯ ДЛЯ ЗАПУСКА ВТОРОГО БОТА (ppp.py)
-async def run_ppp_bot():
-    """Фоновый запуск скрипта ppp.py"""
 
-    # 1. Получаем точный путь к файлу, чтобы сервер точно его нашел
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    ppp_path = os.path.join(current_dir, 'ppp.py')
-
-    if not os.path.exists(ppp_path):
-        logging.error(f"❌ ФАЙЛ НЕ НАЙДЕН: {ppp_path}. Убедись, что он лежит в той же папке!")
-        return
-
-    logging.info("🚀 Запускаем второго бота (ppp.py)...")
-
-    # 2. Флаг '-u' заставляет Python выдавать логи сразу, без задержек (буферизации)
-    process = await asyncio.create_subprocess_exec(
-        sys.executable, '-u', ppp_path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
 
     # Функция для перехвата и вывода логов от ppp.py
-    async def read_stream(stream, prefix):
-        while True:
-            line = await stream.readline()
-            if not line:
-                break
-            print(f"{prefix}: {line.decode('utf-8').strip()}")
 
-    # Читаем логи в фоне
-    asyncio.create_task(read_stream(process.stdout, "🏀 [PPP]"))
-    asyncio.create_task(read_stream(process.stderr, "❌ [PPP ERROR]"))
-
-    # 3. ВАЖНО: заставляем основную программу следить за этим процессом
-    await process.wait()
-    logging.warning("⚠️ Процесс ppp.py завершил свою работу!")
 
 
 async def main():
@@ -123,7 +92,7 @@ async def main():
     logging.info("🔄 Самопинг запущен (каждые 10 минут)")
 
     # === ЗАПУСК ВТОРОГО БОТА ===
-    asyncio.create_task(run_ppp_bot())
+
 
     # Запуск поллинга основного бота
     logging.info("🤖 Основной бот начал поллинг сообщений...")
