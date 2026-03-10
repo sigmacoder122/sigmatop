@@ -1637,7 +1637,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 CACTUS_TOKEN = "4abbe943eeead14e06bb2821"
 
 # URL для создания платежа
-CACTUS_API_CREATE = "https://lk.cactuspay.pro/api/"
+CACTUS_API_CREATE = "https://lk.cactuspay.pro/api/?method=create"
 # URL для проверки платежа
 CACTUS_API_GET = "https://lk.cactuspay.pro/api/?method=get"
 
@@ -1658,7 +1658,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 # from notifications import notify_admin # Укажите ваш путь импорта
 # --- КОНФИГУРАЦИЯ CACTUSPAY ---
 CACTUS_TOKEN = "4abbe943eeead14e06bb2821"
-CACTUS_API_CREATE = "https://lk.cactuspay.pro/api/"
+CACTUS_API_CREATE = "https://lk.cactuspay.pro/api/?method=create"
 CACTUS_API_GET = "https://lk.cactuspay.pro/api/?method=get"
 
 
