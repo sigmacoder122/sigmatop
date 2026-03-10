@@ -1619,9 +1619,54 @@ async def cancel_stars_payment(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+import uuid
+import aiohttp
+import logging
+from aiogram import F, Router
+from aiogram.types import CallbackQuery, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+# Предполагается, что у вас уже есть импорт вашей базы данных/запросов, например:
+# import database.requests as rq
+
+router = Router()
+
+# --- КОНФИГУРАЦИЯ CACTUSPAY ---
+# ⚠️ ВНИМАНИЕ: Крайне рекомендуется вынести токен в .env файл!
+CACTUS_TOKEN = "4abbe943eeead14e06bb2821"
+
+# URL для создания платежа
+CACTUS_API_CREATE = "https://lk.cactuspay.pro/api/"
+# URL для проверки платежа
+CACTUS_API_GET = "https://lk.cactuspay.pro/api/?method=get"
+
+
+# ------------------------------
+
+
+import uuid
+import aiohttp
+import logging
+from aiogram import F, Router
+from aiogram.types import CallbackQuery, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+# Предполагается, что у вас импортированы модули работы с БД и уведомлениями:
+# import database.requests as rq
+# from notifications import notify_admin # Укажите ваш путь импорта
+# --- КОНФИГУРАЦИЯ CACTUSPAY ---
+CACTUS_TOKEN = "4abbe943eeead14e06bb2821"
+CACTUS_API_CREATE = "https://lk.cactuspay.pro/api/"
+CACTUS_API_GET = "https://lk.cactuspay.pro/api/?method=get"
+
+
+# ------------------------------
+
+
 @router.callback_query(F.data.startswith("pay_card_"))
 async def pay_with_card(callback: CallbackQuery, state: FSMContext):
-    # Убираем часики на кнопке и показываем всплывающее уведомление
     await callback.answer("⏳ Создаю платеж...", show_alert=False)
 
     try:
@@ -1633,43 +1678,128 @@ async def pay_with_card(callback: CallbackQuery, state: FSMContext):
             await callback.message.answer("⚠️ Ошибка: товар не найден.")
             return
 
-        amount = item.price
-
-        # 1. ОТПРАВЛЯЕМ НОВОЕ ТЕКСТОВОЕ СООБЩЕНИЕ (его уже можно редактировать)
+        amount = float(item.price)
+        order_id = str(uuid.uuid4())
         status_msg = await callback.message.answer("⏳ Генерирую ссылку на оплату...")
 
-        # 2. Запрашиваем ссылку у Platega
-        payment_url, transaction_id = await create_platega_invoice_async(
-            amount=amount,
-            item_id=item_id,
-            user_id=callback.from_user.id
-        )
+        payload = {
+            "token": CACTUS_TOKEN,
+            "order_id": order_id,
+            "amount": amount,
+            "description": f"Оплата товара: {item.name}"
+        }
 
-        if payment_url and transaction_id:
-            # 3. Сохраняем transaction_id в FSM
+        payment_url = None
+
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(CACTUS_API_CREATE, json=payload) as response:
+                    result = await response.json()
+                    if result.get("status") == "success":
+                        payment_url = result["response"]["url"]
+                    else:
+                        logging.error(f"CactusPay create error: {result}")
+            except Exception as e:
+                logging.error(f"CactusPay connection error: {str(e)}")
+
+        if payment_url:
             await state.update_data(
-                tx_id=transaction_id,
+                order_id=order_id,
                 item_id=item_id,
-                order_id=f"order_{transaction_id}"
+                amount=amount
             )
 
-            # 4. Собираем клавиатуру с кнопкой оплаты
             kb = InlineKeyboardBuilder()
             kb.add(InlineKeyboardButton(text="💳 Оплатить", url=payment_url))
-            kb.row(InlineKeyboardButton(text="🔄 Я оплатил", callback_data="check_platega_payment"))
+            kb.row(InlineKeyboardButton(text="🔄 Я оплатил", callback_data="check_cactus_payment"))
 
-            # 5. РЕДАКТИРУЕМ наше новое текстовое сообщение (status_msg)
             await status_msg.edit_text(
-                text=f"🧾 <b>Заказ:</b> {item.name}\n💰 <b>Сумма к оплате:</b> {amount} RUB\n\nПерейдите по ссылке ниже, чтобы оплатить картой/СБП.",
+                text=(
+                    f"🧾 <b>Заказ:</b> {item.name}\n"
+                    f"💰 <b>Сумма к оплате:</b> {amount} RUB\n"
+                    f"🔖 <b>Номер заказа:</b> <code>{order_id}</code>\n\n"
+                    f"Перейдите по ссылке ниже, чтобы оплатить."
+                ),
                 reply_markup=kb.as_markup(),
                 parse_mode="HTML"
             )
         else:
-            await status_msg.edit_text("⚠️ Ошибка при создании платежа. Попробуйте другой способ.")
+            await status_msg.edit_text("⚠️ Ошибка при создании платежа на стороне шлюза. Попробуйте позже.")
 
     except Exception as e:
         logging.error(f"Card payment error: {str(e)}")
         await callback.message.answer("⚠️ Произошла непредвиденная ошибка при создании платежа.")
+
+
+@router.callback_query(F.data == "check_cactus_payment")
+async def check_payment(callback: CallbackQuery, state: FSMContext):
+    user_data = await state.get_data()
+    order_id = user_data.get("order_id")
+    item_id = user_data.get("item_id")
+
+    if not order_id or not item_id:
+        await callback.answer("⚠️ Заказ не найден или время сессии истекло.", show_alert=True)
+        return
+
+    await callback.answer("🔄 Проверяю статус платежа...", show_alert=False)
+
+    payload = {
+        "token": CACTUS_TOKEN,
+        "order_id": order_id
+    }
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(CACTUS_API_GET, json=payload) as response:
+                result = await response.json()
+
+                if result.get("status") == "success":
+                    payment_data = result.get("response", {})
+                    payment_status = payment_data.get("status")
+
+                    if payment_status == "ACCEPT":
+                        # 1. Загружаем товар из БД, чтобы получить его имя для уведомления
+                        item = await rq.get_item_by_id(item_id)
+                        item_name = item.name if item else "Неизвестный товар"
+
+                        # 2. Уведомляем пользователя
+                        await callback.message.edit_text(
+                            f"✅ <b>Оплата успешно получена!</b>\n\n"
+                            f"Номер заказа: <code>{order_id}</code>\n"
+                            f"Товар: <b>{item_name}</b>\n\n"
+                            f"Спасибо за покупку!"
+                        )
+
+                        # 3. Отправляем уведомление администратору
+                        try:
+                            await notify_admin(
+                                bot=callback.bot,
+                                order_id=order_id,
+                                user_id=callback.from_user.id,
+                                item_name=item_name,
+                                payment_method="CactusPay"
+                            )
+                        except Exception as e:
+                            logging.error(f"Ошибка при отправке уведомления админу: {e}")
+
+                        # 4. ВЫДАЧА ТОВАРА (Раскомментируйте и добавьте вашу функцию)
+                        # await rq.give_item_to_user(callback.from_user.id, item_id)
+
+                        # 5. Очищаем состояние
+                        await state.clear()
+
+                    elif payment_status == "WAIT":
+                        await callback.answer("⏳ Платеж еще не найден. Попробуйте проверить через минуту.",
+                                              show_alert=True)
+                    else:
+                        await callback.answer(f"⚠️ Неизвестный статус платежа: {payment_status}", show_alert=True)
+                else:
+                    logging.error(f"CactusPay check error: {result}")
+                    await callback.answer("⚠️ Ошибка при проверке статуса в платежной системе.", show_alert=True)
+
+        except Exception as e:
+            logging.error(f"CactusPay check connection error: {str(e)}")
+            await callback.answer("❌ Ошибка соединения с платежным шлюзом.", show_alert=True)
 
 @router.callback_query(F.data == "cancel_payment")
 async def cancel_payment(callback: CallbackQuery, state: FSMContext):

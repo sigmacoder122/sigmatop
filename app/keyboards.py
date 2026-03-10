@@ -136,7 +136,7 @@ async def payment_methods(item_id, category_id):
     )
     # ДОБАВЛЯЕМ НОВУЮ КНОПКУ:
     keyboard.row(
-        InlineKeyboardButton(text='Банковская карта / СБП 💳', callback_data=f'pay_card_{item_id}')
+        InlineKeyboardButton(text='Банковская карта / СБП 💳 (от 100р)', callback_data=f'pay_card_{item_id}')
     )
     keyboard.row(InlineKeyboardButton(
         text='Назад к товарам↩️ ',
