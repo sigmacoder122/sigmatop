@@ -13,7 +13,7 @@ from config import TOKEN
 from app.handlers import router
 from app.database.models import async_main
 from app.middlewares import SubscriptionMiddleware
-
+TOKENS = '8442407027:AAHrzmYyqlMYwOQMcIdxZIxhHzmo5G24cOs'
 
 async def self_ping():
     """Пинг самого себя каждые 10 минут, чтобы не засыпать"""
@@ -57,7 +57,7 @@ async def main():
 
     # Инициализация бота
     bot = Bot(
-        token=TOKEN,
+        token=TOKENS,
         default=DefaultBotProperties(parse_mode="HTML")
     )
 
