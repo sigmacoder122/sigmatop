@@ -1630,7 +1630,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 # Предполагается, что у вас уже есть импорт вашей базы данных/запросов, например:
 # import database.requests as rq
 
-router = Router()
+
 
 # --- КОНФИГУРАЦИЯ CACTUSPAY ---
 # ⚠️ ВНИМАНИЕ: Крайне рекомендуется вынести токен в .env файл!
