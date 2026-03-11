@@ -1812,6 +1812,167 @@ async def cancel_payment(callback: CallbackQuery, state: FSMContext):
 
 orders = {}
 
+import aiohttp
+import logging
+
+PLATEGA_API_BASE = "https://app.platega.io"
+MERCHANT_ID = "de2ca737-2c78-4f6b-b213-8179c25ea4bf"
+API_SECRET = "u5jYRfAaWUGs2lxibMm3ostWyAiMFpEgKTGIw7xuA46lATQBEqIw5EUldTiqBg2K23S3gys8dbBlqQzb6YIEzfJ5hgX7oocyNGFI"
+
+
+@router.callback_query(F.data.startswith("pay_platega_"))
+async def pay_with_platega(callback: CallbackQuery, state: FSMContext):
+    await callback.answer("⏳ Создаю платеж через шлюз 2...", show_alert=False)
+
+    try:
+        data = callback.data.split('_')
+        item_id = data[2]
+
+        item = await rq.get_item_by_id(item_id)
+        if not item:
+            await callback.message.answer("⚠️ Ошибка: товар не найден.")
+            return
+
+        amount = float(item.price)
+        status_msg = await callback.message.answer("⏳ Генерирую ссылку на оплату СБП 2...")
+
+        # Обращаемся к функции API Platega
+        payment_url, transaction_id = await create_platega_invoice_async(
+            amount=amount,
+            item_id=item_id,
+            user_id=callback.from_user.id
+        )
+
+        if payment_url and transaction_id:
+            # Сохраняем данные транзакции
+            await state.update_data(
+                platega_tx_id=transaction_id,
+                item_id=item_id,
+                amount=amount
+            )
+
+            # Клавиатура с кнопкой "Оплатить" и "Проверить"
+            kb = InlineKeyboardBuilder()
+            kb.add(InlineKeyboardButton(text="💳 Оплатить (СБП 2)", url=payment_url))
+            kb.row(InlineKeyboardButton(text="🔄 Я оплатил", callback_data="check_platega_payment"))
+
+            await status_msg.edit_text(
+                text=(
+                    f"🧾 <b>Заказ:</b> {item.name}\n"
+                    f"💰 <b>Сумма к оплате:</b> {amount} RUB\n"
+                    f"🔖 <b>Номер транзакции:</b> <code>{transaction_id}</code>\n\n"
+                    f"Перейдите по ссылке ниже, чтобы оплатить."
+                ),
+                reply_markup=kb.as_markup(),
+                parse_mode="HTML"
+            )
+        else:
+            await status_msg.edit_text(
+                "⚠️ Ошибка при создании платежа на стороне второго шлюза. Попробуйте другой способ.")
+
+    except Exception as e:
+        logging.error(f"Platega payment error: {str(e)}")
+        await callback.message.answer("⚠️ Произошла непредвиденная ошибка при создании платежа.")
+
+
+@router.callback_query(F.data == "check_platega_payment")
+async def check_platega_payment(callback: CallbackQuery, state: FSMContext):
+    user_data = await state.get_data()
+    tx_id = user_data.get("platega_tx_id")
+    item_id = user_data.get("item_id")
+
+    if not tx_id or not item_id:
+        await callback.answer("⚠️ Заказ не найден или время сессии истекло.", show_alert=True)
+        return
+
+    await callback.answer("🔄 Проверяю статус платежа...", show_alert=False)
+
+    # Проверяем статус в Platega
+    payment_status = await check_platega_status_async(tx_id)
+
+    if payment_status == "CONFIRMED":
+        item = await rq.get_item_by_id(item_id)
+        item_name = item.name if item else "Неизвестный товар"
+
+        await callback.message.edit_text(
+            f"✅ <b>Оплата успешно получена!</b>\n\n"
+            f"Номер транзакции: <code>{tx_id}</code>\n"
+            f"Товар: <b>{item_name}</b>\n\n"
+            f"Спасибо за покупку!"
+        )
+
+        try:
+            await notify_admin(
+                bot=callback.bot,
+                order_id=tx_id,
+                user_id=callback.from_user.id,
+                item_name=item_name,
+                payment_method="Platega (СБП 2)"
+            )
+        except Exception as e:
+            logging.error(f"Ошибка при отправке уведомления админу: {e}")
+
+        # ТУТ ВАША ФУНКЦИЯ ВЫДАЧИ ТОВАРА
+        # await rq.give_item_to_user(callback.from_user.id, item_id)
+
+        await state.clear()
+
+    elif payment_status == "PENDING":
+        await callback.answer("⏳ Оплата еще не поступила. Попробуйте проверить через минуту.", show_alert=True)
+
+    elif payment_status in ["CANCELED", "CHARGEBACKED"]:
+        await callback.message.edit_text(
+            "❌ Платеж отменен, время вышло или произошел возврат. Пожалуйста, создайте новый заказ.")
+        await state.clear()
+
+    else:
+        await callback.answer("⚠️ Ошибка при проверке статуса или сервис временно недоступен.", show_alert=True)
+
+async def create_platega_invoice_async(amount: float, item_id: str, user_id: int):
+    url = f"{PLATEGA_API_BASE}/transaction/process"
+    headers = {"X-MerchantId": MERCHANT_ID, "X-Secret": API_SECRET, "Content-Type": "application/json"}
+
+    payload = {
+        "paymentMethod": 2,  # Уточни метод СБП в Platega
+        "paymentDetails": {
+            "amount": float(amount),
+            "currency": "RUB"
+        },
+        "description": f"Оплата товара #{item_id}",
+        "payload": f"{user_id}_{item_id}"
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get("redirect"), data.get("transactionId")
+                else:
+                    logging.error(f"Platega create error: {await response.text()}")
+                    return None, None
+    except Exception as e:
+        logging.error(f"Platega connection error: {e}")
+        return None, None
+
+
+async def check_platega_status_async(tx_id: str):
+    url = f"{PLATEGA_API_BASE}/transaction/{tx_id}"
+    headers = {"X-MerchantId": MERCHANT_ID, "X-Secret": API_SECRET}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get("status")
+                else:
+                    logging.error(f"Platega status error: {await response.text()}")
+                    return None
+    except Exception as e:
+        logging.error(f"Platega connection error: {e}")
+        return None
+
 
 ADMIN_ID = 7658738825
 

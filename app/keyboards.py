@@ -128,20 +128,35 @@ async def items(category_id, page=0, sort_mode="asc"):
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
 
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardButton
+
+
 async def payment_methods(item_id, category_id):
     keyboard = InlineKeyboardBuilder()
+
+    # Существующие методы
     keyboard.add(
         InlineKeyboardButton(text='Telegram Stars 🌟', callback_data=f'pay_stars_{item_id}'),
         InlineKeyboardButton(text='Crypto Bot/USDT', callback_data=f'pay_crypto_{item_id}')
     )
-    # ДОБАВЛЯЕМ НОВУЮ КНОПКУ:
+
+    # Первый шлюз (CactusPay)
     keyboard.row(
         InlineKeyboardButton(text='Банковская карта / СБП 💳 (от 100р)', callback_data=f'pay_card_{item_id}')
     )
+
+    # ВТОРОЙ ШЛЮЗ (Platega)
+    keyboard.row(
+        InlineKeyboardButton(text='СБП 2 💳 (от 50р)', callback_data=f'pay_platega_{item_id}')
+    )
+
+    # Кнопка возврата
     keyboard.row(InlineKeyboardButton(
         text='Назад к товарам↩️ ',
         callback_data=f'category_{category_id}'
     ))
+
     return keyboard.adjust(1).as_markup()
 
 # В файле keyboards.py (или где у тебя этот метод)

