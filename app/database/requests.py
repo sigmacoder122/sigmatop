@@ -4,7 +4,13 @@ from datetime import datetime
 from aiogram.types import Message  # Добавьте это в начале файла
 from app.database.models import async_session, User, Category, Item, Order  # Добавьте Order
 from sqlalchemy import func
+from sqlalchemy import select
+from app.database.models import async_session, User
 
+async def get_all_users():
+    async with async_session() as session:
+        result = await session.execute(select(User))
+        return result.scalars().all()
 async def get_categories_paginated(limit=12, offset=0):
     async with async_session() as session:
         result = await session.scalars(
@@ -14,13 +20,19 @@ async def get_categories_paginated(limit=12, offset=0):
             .order_by(Category.id)
         )
         return result.all()
+
+
 async def set_user(tg_id: int):
     async with async_session() as session:
+        # Проверяем наличие пользователя
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
+
         if not user:
-            # Создаем пользователя с текущей датой регистрации
+            # Если пользователя нет — создаем
             session.add(User(tg_id=tg_id, registered_at=datetime.now()))
             await session.commit()
+            print(f"Пользователь {tg_id} успешно зарегистрирован.")
+        # Если пользователь есть, ничего не делаем
 async def get_total_items_count(category_id):
     async with async_session() as session:
         result = await session.scalar(

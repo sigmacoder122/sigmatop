@@ -8,7 +8,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand, BotCommandScopeDefault
 from aiogram.client.default import DefaultBotProperties
-
+from app.middlewares import RegisterCheckMiddleware
 from config import TOKEN
 from app.handlers import router
 from app.database.models import async_main
@@ -65,7 +65,9 @@ async def main():
     await bot.delete_webhook(drop_pending_updates=True)
 
     dp = Dispatcher()
-
+    dp.message.outer_middleware(RegisterCheckMiddleware())
+    # Регистрация для всех нажатий на кнопки
+    dp.callback_query.outer_middleware(RegisterCheckMiddleware())
     # Регистрация мидлварей
     dp.message.middleware.register(SubscriptionMiddleware(bot))
     dp.callback_query.middleware.register(SubscriptionMiddleware(bot))

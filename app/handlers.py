@@ -101,6 +101,7 @@ CHANNEL_ID = '@eelge'
 async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
 
+
     # --- 1. ПРОВЕРКА ПОДПИСКИ ---
     try:
         member = await bot.get_chat_member(CHANNEL_ID, user_id)
@@ -2316,24 +2317,57 @@ async def broadcast_command(message: Message, state: FSMContext):
     await state.set_state(BroadcastStates.waiting_broadcast_text)
 
 
-@router.message(BroadcastStates.waiting_broadcast_text, F.from_user.id == ADMIN_ID)
-async def process_broadcast_text(message: Message, state: FSMContext):
-    broadcast_text = message.text
+import asyncio
+from aiogram import Router, F
+from aiogram.types import Message
+from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
+import app.database.requests as rq  # Импорт ваших запросов
+
+
+@router.message(BroadcastStates.waiting_broadcast_text)
+async def process_broadcast(message: Message, state: FSMContext):
+    # 1. Получаем список всех юзеров из БД
     users = await rq.get_all_users()
-    total_users = len(users)
 
-    # Сохраняем текст и переходим в состояние подтверждения
-    await state.update_data(broadcast_text=broadcast_text)
+    # Счетчики для статистики
+    count_success = 0
+    count_blocked = 0
+    count_errors = 0
 
-    # Показываем превью с форматированием
-    await message.answer(
-        f"📋 <b>Предпросмотр рассылки:</b>\n\n"
-        f"{broadcast_text}\n\n"
-        f"👥 Всего пользователей: <b>{total_users}</b>\n"
-        f"❓ Отправить рассылку? (да/нет)",
+    # Информационное сообщение админу
+    status_msg = await message.answer(f"⏳ Рассылка запущена для {len(users)} чел...")
+
+    # 2. Цикл рассылки
+    for user in users:
+        try:
+            # Метод copy() сохраняет всё: текст, форматирование, фото, видео
+            await message.copy_to(chat_id=user.tg_id)
+            count_success += 1
+
+            # Небольшая задержка, чтобы Telegram не забанил (Flood Limit)
+            await asyncio.sleep(0.05)
+
+        except TelegramForbiddenError:
+            # Юзер заблокировал бота — обычное дело
+            count_blocked += 1
+        except TelegramRetryAfter as e:
+            # Если превысили лимит сообщений в секунду — ждем сколько просит TG
+            await asyncio.sleep(e.retry_after)
+            await message.copy_to(chat_id=user.tg_id)
+            count_success += 1
+        except Exception:
+            count_errors += 1
+
+    # 3. Итог
+    await state.clear()
+    await status_msg.edit_text(
+        f"📊 <b>Итоги рассылки:</b>\n\n"
+        f"✅ Успешно: <b>{count_success}</b>\n"
+        f"🚫 Заблокировали бота: <b>{count_blocked}</b>\n"
+        f"⚠️ Ошибки отправки: <b>{count_errors}</b>",
         parse_mode="HTML"
     )
-    await state.set_state(BroadcastStates.confirm_broadcast)
 
 
 @router.message(BroadcastStates.confirm_broadcast, F.from_user.id == ADMIN_ID)

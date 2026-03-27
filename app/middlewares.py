@@ -4,7 +4,27 @@ from typing import Callable, Dict, Awaitable, Any
 from config import CHANNEL_ID  # ID вашего канала
 import logging
 
+from typing import Callable, Dict, Any, Awaitable
+from aiogram import BaseMiddleware
+from aiogram.types import Message, CallbackQuery
+from app.database.requests import set_user  # Путь к вашей функции регистрации
 
+
+class RegisterCheckMiddleware(BaseMiddleware):
+    async def __call__(
+            self,
+            handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
+            event: Message | CallbackQuery,
+            data: Dict[str, Any]
+    ) -> Any:
+        # Извлекаем пользователя из события (сообщения или кнопки)
+        user = event.from_user
+
+        if user:
+            # Регистрируем пользователя, если его нет
+            await set_user(user.id)
+
+        return await handler(event, data)
 class SubscriptionMiddleware(BaseMiddleware):
     def __init__(self, bot: Bot):
         self.bot = bot
