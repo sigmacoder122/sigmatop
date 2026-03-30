@@ -35,7 +35,7 @@ def settings():
         inline_keyboard=[
             [InlineKeyboardButton(text="🛒 Купить аккаунт", callback_data="buyacc")],
             # ДОБАВЛЯЕМ НОВУЮ КНОПКУ СЮДА:
-            [InlineKeyboardButton(text="⏳ Аккаунты с отлегой", callback_data="aging_menu")],
+            [InlineKeyboardButton(text="🆕⏳ Аккаунты с отлегой🆕", callback_data="aging_menu")],
             [
                 InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
                 InlineKeyboardButton(text="📜 История", callback_data="purchase_history")

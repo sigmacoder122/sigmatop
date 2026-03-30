@@ -1612,79 +1612,106 @@ from aiogram.types import CallbackQuery
 # ... твои импорты ...
 
 # 1. Хэндлер для открытия меню выбора отлеги
+# Обязательно добавь этот импорт в самый верх файла, если его там нет!
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+
+# -------------------------------------------------------------------
+# БЛОК: АККАУНТЫ С ОТЛЕГОЙ
+# -------------------------------------------------------------------
+
+# 1. Открытие меню выбора отлеги
 @router.callback_query(F.data == "aging_menu")
 async def show_aging_menu(callback: CallbackQuery):
-    await callback.message.edit_text(
-        "<b>⏳ Выберите срок отлеги аккаунтов:</b>\n\n"
-        "<i>Чем больше отлега, тем выше траст аккаунта!</i>",
-        reply_markup=aging_categories_kb(),
-        parse_mode="HTML"
+    # Твоя новая картинка
+    photo_id = "AgACAgQAAxkBAAImg2nK3MUIn9MgysPDvbHiLdQ4igFNAAJaEWsbW0RRUu6GS18il5PNAQADAgADeQADOgQ"
+
+    text = (
+        "<b>⏳ КАТАЛОГ: АККАУНТЫ С ОТЛЕГОЙ</b>\n\n"
+        "<blockquote>Чем больше отлега у аккаунта, тем выше его траст "
+        "и устойчивость к блокировкам. Выберите нужный срок:</blockquote>"
+    )
+
+    # Меняем текущую картинку на новую с новым текстом
+    await callback.message.edit_media(
+        media=types.InputMediaPhoto(
+            media=photo_id,
+            caption=text,
+            parse_mode="HTML"
+        ),
+        reply_markup=kb.aging_categories_kb()  # Твоя клавиатура
     )
     await callback.answer()
 
 
-# 2. Хэндлер для отображения списка аккаунтов с выбранной отлегой
+# 2. Вывод списка товаров конкретной отлеги (например, 30 дней)
 @router.callback_query(F.data.startswith("aging_group_"))
-async def show_aged_items(callback: CallbackQuery):
+async def show_aged_items_list(callback: CallbackQuery):
+    # Достаем количество дней из кнопки
     days = int(callback.data.split('_')[2])
-    items = await get_items_by_aging(aging_days=days)  # Твоя функция из requests
+
+    # Ищем товары в БД
+    items = await rq.get_items_by_aging(aging_days=days)
 
     if not items:
         await callback.answer(f"Аккаунтов с отлегой {days} дней пока нет 😔", show_alert=True)
         return
 
-    # Здесь генерируешь клавиатуру со списком товаров (как у тебя сделано для обычных категорий)
-    # Ниже пример базовой клавиатуры для списка:
+    # Собираем кнопки с товарами
     kb_builder = InlineKeyboardBuilder()
     for item in items:
-        kb_builder.button(text=f"{item.name} - {item.price}₽", callback_data=f"ageditem_{item.id}")
-    kb_builder.button(text="🔙 Назад", callback_data="aging_menu")
-    kb_builder.adjust(1)  # По одной кнопке в ряд
+        kb_builder.button(text=f"{item.name} | {int(item.price)}₽", callback_data=f"ageditem_{item.id}")
 
-    await callback.message.edit_text(
-        f"<b>📁 Аккаунты с отлегой: {days} дней</b>\n\nВыберите нужный товар:",
-        reply_markup=kb_builder.as_markup(),
-        parse_mode="HTML"
+    kb_builder.button(text="🔙 Назад", callback_data="aging_menu")
+    kb_builder.adjust(1)  # В один столбик
+
+    photo_id = "AgACAgQAAxkBAAImg2nK3MUIn9MgysPDvbHiLdQ4igFNAAJaEWsbW0RRUu6GS18il5PNAQADAgADeQADOgQ"
+
+    await callback.message.edit_media(
+        media=types.InputMediaPhoto(
+            media=photo_id,
+            caption=(
+                f"<b>📁 КАТЕГОРИЯ: ОТЛЕГА {days} ДНЕЙ</b>\n\n"
+                f"<blockquote>Здесь собраны аккаунты, прошедшие проверку временем.\n"
+                f"<b>Статус:</b> Проверены ✅\n"
+                f"<b>Гарантия:</b> 24 часа 🛡</blockquote>\n"
+                f"Выберите подходящий товар ниже:"
+            ),
+            parse_mode="HTML"
+        ),
+        reply_markup=kb_builder.as_markup()
     )
     await callback.answer()
 
 
-# 3. Хэндлер для показа конкретного аккаунта с отлегой (С КРАСИВЫМ ФОРМАТИРОВАНИЕМ)
+# 3. Карточка конкретного аккаунта с отлегой
 @router.callback_query(F.data.startswith("ageditem_"))
 async def show_aged_item_detail(callback: CallbackQuery):
     item_id = int(callback.data.split('_')[1])
-    item_data = await rq.get_item_by_id(item_id)  # Твоя функция из requests
+    item_data = await rq.get_item_by_id(item_id)
 
     if not item_data:
-        await callback.answer("Товар не найден!")
+        await callback.answer("Товар не найден!", show_alert=True)
         return
 
-    # Тот самый красивый HTML текст с цитатой
     caption_text = (
         "<b>💎 ПРЕМИУМ АККАУНТ С ОТЛЕГОЙ</b>\n\n"
         f"<blockquote><b>🏳️ Название:</b> {item_data.name}\n"
         f"<b>⏳ Отлега:</b> {item_data.aging_days} дней\n"
-        f"<b>📝 Описание:</b> {item_data.description}\n"
         f"<b>💵 Цена:</b> {item_data.price} RUB</blockquote>\n"
         "➖➖➖➖➖➖➖➖➖➖\n"
         "<b>💳 Выберите способ оплаты:</b>"
     )
 
-    new_media = types.InputMediaPhoto(
-        media="AgACAgQAAxkBAAIRhmmBCKVgYQUdGJR1w487TY2Ow5pHAAJsEGsb3gYIULDY1Wk8kLn4AQADAgADeAADOAQ",  # Твоя картинка
-        caption=caption_text,
-        parse_mode="HTML"
-    )
+    photo_id = "AgACAgQAAxkBAAImg2nK3MUIn9MgysPDvbHiLdQ4igFNAAJaEWsbW0RRUu6GS18il5PNAQADAgADeQADOgQ"
 
-    # Если до этого сообщение было текстовым (из меню), используем answer_photo,
-    # если это уже медиа - edit_message_media.
-    # В нашем флоу меню было текстом, так что лучше удалить старое и прислать новое с фото:
-    await callback.message.delete()
-    await callback.message.answer_photo(
-        photo="AgACAgQAAxkBAAIRhmmBCKVgYQUdGJR1w487TY2Ow5pHAAJsEGsb3gYIULDY1Wk8kLn4AQADAgADeAADOAQ",
-        caption=caption_text,
-        reply_markup=await kb.payment_methods(item_id, item_data.category),  # Твоя клавиатура оплаты
-        parse_mode="HTML"
+    await callback.message.edit_media(
+        media=types.InputMediaPhoto(
+            media=photo_id,
+            caption=caption_text,
+            parse_mode="HTML"
+        ),
+        reply_markup=await kb.payment_methods(item_id, item_data.category)
     )
     await callback.answer()
 @router.callback_query(F.data == "cancel_payment")
