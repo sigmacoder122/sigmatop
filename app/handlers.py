@@ -2391,6 +2391,103 @@ class BroadcastStates(StatesGroup):
     confirm_broadcast = State()  # 👈 Добавлено новое состояние
 
 
+from aiogram import F, Router, types
+from aiogram.types import CallbackQuery
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+# Обязательные импорты твоих файлов (убедись, что пути правильные)
+import app.database.requests as rq
+import app.keyboards as kb
+
+
+# -------------------------------------------------------------------
+# БЛОК: АККАУНТЫ С ОТЛЕГОЙ
+# -------------------------------------------------------------------
+
+# 1. Открытие меню выбора отлеги (переход из Главного меню)
+@router.callback_query(F.data == "aging_menu")
+async def show_aging_menu(callback: CallbackQuery):
+    # Удаляем старое сообщение (чтобы не было ошибки, если там была картинка)
+    await callback.message.delete()
+
+    # Присылаем новое текстовое меню с категориями отлеги
+    await callback.message.answer(
+        "<b>⏳ Выберите срок отлеги аккаунтов:</b>\n\n"
+        "<i>Чем больше отлега, тем выше траст аккаунта!</i>",
+        reply_markup=kb.aging_categories_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+# 2. Вывод списка товаров выбранной категории (например, все акки по 60 дней)
+@router.callback_query(F.data.startswith("aging_group_"))
+async def show_aged_items_list(callback: CallbackQuery):
+    # Достаем количество дней из коллбэка (например, из "aging_group_60" достаем 60)
+    days = int(callback.data.split('_')[2])
+
+    # Делаем запрос в базу данных
+    items = await rq.get_items_by_aging(aging_days=days)
+
+    if not items:
+        await callback.answer(f"Аккаунтов с отлегой {days} дней пока нет 😔", show_alert=True)
+        return
+
+    # Динамически собираем клавиатуру с товарами
+    kb_builder = InlineKeyboardBuilder()
+    for item in items:
+        # Указываем префикс ageditem_, чтобы не путать с обычными товарами
+        kb_builder.button(text=f"{item.name} | {item.price}₽", callback_data=f"ageditem_{item.id}")
+
+    kb_builder.button(text="🔙 Назад", callback_data="aging_menu")
+    kb_builder.adjust(1)  # Выстраиваем кнопки в один столбик
+
+    # Так как прошлое сообщение было текстовым, мы можем его просто отредактировать
+    await callback.message.edit_text(
+        f"<b>📁 КАТЕГОРИЯ: ОТЛЕГА {days} ДНЕЙ</b>\n\n"
+        f"<blockquote>Здесь собраны аккаунты, прошедшие проверку временем.\n"
+        f"<b>Статус:</b> Проверены ✅\n"
+        f"<b>Гарантия:</b> 24 часа 🛡</blockquote>\n"
+        f"Выберите подходящий товар ниже:",
+        reply_markup=kb_builder.as_markup(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+# 3. Карточка конкретного товара с отлегой (с фото и красивым текстом)
+@router.callback_query(F.data.startswith("ageditem_"))
+async def show_aged_item_detail(callback: CallbackQuery):
+    # Достаем ID товара из базы
+    item_id = int(callback.data.split('_')[1])
+    item_data = await rq.get_item_by_id(item_id)
+
+    if not item_data:
+        await callback.answer("Товар не найден!", show_alert=True)
+        return
+
+    # Формируем красивый текст с цитатой
+    caption_text = (
+        "<b>💎 ПРЕМИУМ АККАУНТ С ОТЛЕГОЙ</b>\n\n"
+        f"<blockquote><b>🏳️ Название:</b> {item_data.name}\n"
+        f"<b>⏳ Отлега:</b> {item_data.aging_days} дней\n"
+        f"<b>📝 Описание:</b> {item_data.description}\n"
+        f"<b>💵 Цена:</b> {item_data.price} RUB</blockquote>\n"
+        "➖➖➖➖➖➖➖➖➖➖\n"
+        "<b>💳 Выберите способ оплаты:</b>"
+    )
+
+    # Так как мы переходим от текстового списка к карточке с фото,
+    # старое сообщение нужно удалить, а новое с фото — прислать.
+    await callback.message.delete()
+
+    await callback.message.answer_photo(
+        photo="AgACAgQAAxkBAAIRhmmBCKVgYQUdGJR1w487TY2Ow5pHAAJsEGsb3gYIULDY1Wk8kLn4AQADAgADeAADOAQ",  # Твое фото
+        caption=caption_text,
+        reply_markup=await kb.payment_methods(item_id, item_data.category),  # Вызываем твою клавиатуру оплаты
+        parse_mode="HTML"
+    )
+    await callback.answer()
 # Обработчик команды /all (только для админа)
 @router.message(Command("all"), F.from_user.id == ADMIN_ID)
 async def broadcast_command(message: Message, state: FSMContext):
