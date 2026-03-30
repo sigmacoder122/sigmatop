@@ -47,6 +47,9 @@ class Item(Base):
     price: Mapped[float] = mapped_column()
     category: Mapped[int] = mapped_column(ForeignKey('categories.id'))
 
+    # НОВОЕ ПОЛЕ: Дни отлеги (по умолчанию 0 — без отлеги)
+    aging_days = Column(Integer, default=0)
+
 
 
 

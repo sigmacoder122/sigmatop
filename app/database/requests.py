@@ -33,6 +33,17 @@ async def set_user(tg_id: int):
             await session.commit()
             print(f"Пользователь {tg_id} успешно зарегистрирован.")
         # Если пользователь есть, ничего не делаем
+async def get_items_by_aging(aging_days: int, limit=12, offset=0):
+    async with async_session() as session:
+        result = await session.scalars(
+            select(Item)
+            .where(Item.aging_days == aging_days)
+            .limit(limit)
+            .offset(offset)
+            .order_by(Item.id)
+        )
+        return result.all()
+
 async def get_total_items_count(category_id):
     async with async_session() as session:
         result = await session.scalar(

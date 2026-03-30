@@ -34,21 +34,33 @@ def settings():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🛒 Купить аккаунт", callback_data="buyacc")],
+            # ДОБАВЛЯЕМ НОВУЮ КНОПКУ СЮДА:
+            [InlineKeyboardButton(text="⏳ Аккаунты с отлегой", callback_data="aging_menu")],
             [
                 InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
                 InlineKeyboardButton(text="📜 История", callback_data="purchase_history")
             ],
             [InlineKeyboardButton(text="🎁 Рефералы", callback_data="referral")],
             [InlineKeyboardButton(text="🎟 Промокод", callback_data="promo_code")],
-            # Добавляем кнопку Инфо
-            [InlineKeyboardButton(text="ℹ️ Информация", callback_data="info"),
-             InlineKeyboardButton(text="⭕️ Договор пользователя", callback_data="dogovor")
-             ],
-
+            [
+                InlineKeyboardButton(text="ℹ️ Информация", callback_data="info"),
+                InlineKeyboardButton(text="⭕️ Договор", callback_data="dogovor")
+            ],
         ]
     )
+def aging_categories_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🕟 Отлега 30 дней", callback_data="aging_group_30")],
+            [InlineKeyboardButton(text="🕟 Отлега 90+ дней", callback_data="aging_group_90")],
+            [InlineKeyboardButton(text="🕟 Отлега 180+ дней", callback_data="aging_group_180")],
+            [InlineKeyboardButton(text="🕟 Отлега год+", callback_data="aging_group_360")],
+            [InlineKeyboardButton(text="🕟 Отлега 2 года+", callback_data="aging_group_720")],
+            [InlineKeyboardButton(text="🕟 Отлега 3 года+", callback_data="aging_group_1080")],
 
-
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+        ]
+    )
 # Обработчик кнопки "Инфо"
 
 
