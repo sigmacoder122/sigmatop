@@ -31,14 +31,22 @@ bot = Bot(token=API_TOKEN)
 PLATEGA_API_URL = 'https://app.platega.io/transaction/process'
 MERCHANT_ID = 'de2ca737-2c78-4f6b-b213-8179c25ea4bf'
 API_SECRET = 'u5jYRfAaWUGs2lxibMm3ostWyAiMFpEgKTGIw7xuA46lATQBEqIw5EUldTiqBg2K23S3gys8dbBlqQzb6YIEzfJ5hgX7oocyNGFI'
+from aiogram.fsm.state import StatesGroup, State
 
+class BuyStarsFSM(StatesGroup):
+    bot_message_id = State() # Запоминаем ID сообщения бота, чтобы его редактировать
+    quantity = State()       # Количество звезд
+    recipient = State()      # Ссылка/юзернейм получателя
 class InfoStates(StatesGroup):
     waiting_info = State()
 # Добавляем состояние для капчи
 class CaptchaStates(StatesGroup):
     waiting_captcha = State()
 from aiogram.fsm.state import StatesGroup, State
-
+def cancel_fsm_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="↶ Отменить покупку", callback_data="cancel_stars_fsm")]
+    ])
 class AddItemFSM(StatesGroup):
     name = State()
     description = State()

@@ -113,7 +113,10 @@ async def items(category_id, page=0, sort_mode="asc"):
     return keyboard.as_markup()
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-
+def cancel_fsm_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="↶ Отменить покупку", callback_data="cancel_stars_fsm")]
+    ])
 # Главное меню "Другие товары"
 def other_items_kb():
     return InlineKeyboardMarkup(
