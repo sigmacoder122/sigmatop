@@ -21,26 +21,7 @@ async def get_categories_paginated(limit=12, offset=0):
         )
         return result.all()
 
-from sqlalchemy import select, update
-# Убедись, что импортируешь свою async_session и модель Item
-# from db import async_session, Item
 
-async def add_item_db(name: str, description: str, price: float, category: int, aging_days: int = 0):
-    async with async_session() as session:
-        new_item = Item(
-            name=name,
-            description=description,
-            price=price,
-            category=category,
-            aging_days=aging_days
-        )
-        session.add(new_item)
-        await session.commit()
-
-async def update_item_price_db(item_id: int, new_price: float):
-    async with async_session() as session:
-        await session.execute(update(Item).where(Item.id == item_id).values(price=new_price))
-        await session.commit()
 async def set_user(tg_id: int):
     async with async_session() as session:
         # Проверяем наличие пользователя
@@ -144,3 +125,23 @@ async def get_items_by_category_paginated(category_id, limit=12, offset=0):
         )
         return result.all()
 
+from sqlalchemy import select, update
+# Убедись, что импортируешь свою async_session и модель Item
+# from db import async_session, Item
+
+async def add_item_db(name: str, description: str, price: float, category: int, aging_days: int = 0):
+    async with async_session() as session:
+        new_item = Item(
+            name=name,
+            description=description,
+            price=price,
+            category=category,
+            aging_days=aging_days
+        )
+        session.add(new_item)
+        await session.commit()
+
+async def update_item_price_db(item_id: int, new_price: float):
+    async with async_session() as session:
+        await session.execute(update(Item).where(Item.id == item_id).values(price=new_price))
+        await session.commit()

@@ -75,6 +75,16 @@ from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
+@router.message(Command("adm"))
+async def admin_panel(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return  # Бот проигнорирует всех, кроме тебя
+
+    await message.answer(
+        "🛠 **Панель администратора**",
+        reply_markup=admin_kb(),  # Убедись, что эта функция клавиатуры есть в файле
+        parse_mode="Markdown"
+    )
 # 1. Главное меню "Другие товары"
 @router.callback_query(F.data == "other_items")
 async def show_other_items_menu(callback: CallbackQuery):
@@ -217,7 +227,98 @@ async def process_stars_qty(message: Message, state: FSMContext):
         reply_markup=cancel_fsm_kb()
     )
 
+import requests
+import uuid
+import logging
+from aiogram import F
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
 
+@router.callback_query(F.data == "paystars_crypto")
+async def pay_stars_with_crypto(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    qty = data.get('quantity')
+    recipient = data.get('recipient')
+    price_rub = data.get('price') # Сумма в рублях из машины состояний
+    user_id = callback.from_user.id
+
+    # 1. Генерируем уникальный ID заказа
+    order_id = str(uuid.uuid4())[:8].upper()
+
+    # 2. Сохраняем заказ в твой словарь orders (как у тебя в коде)
+    # Так как товара нет в БД, мы просто запишем название текстом
+    orders[order_id] = {
+        "user_id": user_id,
+        "item_name": f"Telegram Stars ☆ ({qty} шт. для {recipient})",
+        "payment_method": "Crypto Bot",
+        "status": "pending"
+    }
+    save_orders() # Вызываем твою функцию сохранения
+
+    try:
+        headers = {
+            "Crypto-Pay-API-Token": "319088:AAsRs5zFKk5DRCFRsREHtde63rJDzZducjF",
+            "Content-Type": "application/json"
+        }
+
+        # 3. Переводим рубли в USDT (по твоему курсу: делим на 68)
+        usdt_amount = price_rub / 68
+
+        # 4. Создаем счет в Crypto Bot
+        response = requests.post(
+            "https://pay.crypt.bot/api/createInvoice",
+            headers=headers,
+            json={
+                "asset": "USDT",
+                "amount": f"{usdt_amount:.2f}",
+                "description": f"Оплата {qty} Stars для {recipient}",
+                "payload": order_id,
+                "paid_btn_url": "https://t.me/alfasRobot",
+                "allow_anonymous": False
+            }
+        )
+
+        response_data = response.json()
+        if not response_data.get("ok"):
+            await callback.answer("❌ Ошибка создания платежа", show_alert=True)
+            return
+
+        invoice = response_data["result"]
+        orders[order_id]["invoice_id"] = invoice["invoice_id"]
+        save_orders()
+
+        # 5. Ссылка на оплату
+        crypto_bot_link = f"https://t.me/CryptoBot?start={invoice['bot_invoice_url'].split('=')[-1]}"
+
+        # 6. Оформляем текст
+        payment_text = (
+            f"<b>💎 ОПЛАТА ЧЕРЕЗ CRYPTO BOT</b>\n\n"
+            f"<blockquote><b>💰 Сумма:</b> {invoice['amount']} {invoice['asset']}\n"
+            f"<b>🧾 Товар:</b> Telegram Stars ☆ ({qty} шт.)\n"
+            f"<b>👤 Получатель:</b> <code>{recipient}</code></blockquote>\n"
+            "➖➖➖➖➖➖➖➖➖➖➖➖➖\n"
+            "<b>📥 Прямой перевод (Сеть TRC-20):</b>\n"
+            f"<code>TQFosX3FGMoxs2jCS2EG84wALZgfqLx6yK</code>\n\n"
+            "<i>⚠️ После оплаты нажмите кнопку ниже для проверки транзакции.</i>"
+        )
+
+        # Редактируем сообщение (чтобы не спамить новыми)
+        await callback.message.edit_caption(
+            caption=payment_text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Оплатить через Crypto Bot", url=crypto_bot_link)],
+                [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_crypto_{order_id}")],
+                [InlineKeyboardButton(text="❌ Отмена", callback_data=f"cancel_crypto_{order_id}")]
+            ])
+        )
+
+        # Очищаем состояние (пользователь дошел до оплаты)
+        await state.clear()
+
+    except Exception as e:
+        logging.error(f"Crypto stars error: {str(e)}")
+        await callback.answer("⚠️ Ошибка сервера. Попробуйте позже.", show_alert=True)
 # --- ШАГ 3: Ввод получателя и выбор оплаты ---
 @router.message(BuyStarsFSM.recipient)
 async def process_stars_recipient(message: Message, state: FSMContext):
@@ -350,10 +451,7 @@ async def main_menu(callback: CallbackQuery):
     try:
         # Форматируем текст в новом стиле
         main_text = (
-            "<b>🔐 добро пожаловать!</b>\n"
-            "<blockquote>Лучшие Telegram-аккаунты для ваших целей.\n"
-            "Выбирайте нужную категорию в меню ниже.</blockquote>\n\n"
-            "<b>📢 Новости:</b>@eelge\n"
+            "<b>спасибо за ваш выбор</b>\n"           
             "<b>🛡 Гарантия качества:</b> 24/7"
         )
 
@@ -505,9 +603,7 @@ async def process_captcha(callback: CallbackQuery, state: FSMContext):
 
         # 3. Текст главного меню
         main_text = (
-            "<b>🔐 ДОБРО ПОЖАЛОВАТЬ</b>\n\n"
-            "<blockquote>Лучшие Telegram-аккаунты для ваших целей.\n"
-            "Выбирайте нужную категорию в меню ниже.</blockquote>\n\n"
+            "<b>спасибо за ваш выбор</b>\n"
             "<b>📢 Новости:</b> @eelge"
         )
 
@@ -1983,11 +2079,7 @@ from contextlib import suppress
 async def info_back(callback: CallbackQuery):
     # Улучшенный текст главного меню
     main_text = (
-        "<b>🔐 ДОБРО ПОЖАЛОВАТЬ В МАГАЗИН</b>\n"
-        "<blockquote>Лучшие Telegram аккаунты для ваших целей:\n"
-        "• Высокая отлега\n"
-        "• Низкая цена\n"
-        "<b>⚡️ Выберите нужный раздел ниже:</b>"
+        "<b>Чистые аккаунты без спам блока</b>\n"
     )
 
     new_media = types.InputMediaPhoto(
@@ -2649,38 +2741,6 @@ async def check_platega_status_async(tx_id: str):
 ADMIN_ID = 7658738825
 
 
-async def notify_admin(
-        bot: Bot,
-        order_id: str,
-        user_id: int,
-        item_name: str,
-        payment_method: str
-):
-    # Формируем текст сообщения согласно твоему запросу
-    caption = (
-        f"🛎 **Новый заказ**\n\n"
-        f"🆔 ID: `{order_id}`\n"
-        f"👤 Пользователь: `{user_id}`\n"
-        f"🛒 Товар: {item_name}\n"
-        f"💳 Способ оплаты: {payment_method}\n\n"
-        "➖➖➖➖➖➖➖➖➖\n"
-        "👉 **Для получения заказа перешлите это сообщение админу @qvvor**"
-    )
-
-    message = await bot.send_message(
-        ADMIN_ID,
-        caption,
-        parse_mode="Markdown"
-    )
-
-    # Сохраняем ID сообщения в базу заказов
-    if order_id in orders:
-        orders[order_id]["admin_message_id"] = message.message_id
-        save_orders()
-    else:
-        # На случай, если заказ еще не создан в словаре
-        orders[order_id] = {"admin_message_id": message.message_id}
-        save_orders()
 from aiogram.filters import CommandObject
 
 user_balances = {}  # словарь: user_id -> баланс stars
@@ -2819,7 +2879,26 @@ async def refund(message: types.Message):
     except Exception as e:
         await message.answer(f"⚠️ Ошибка при возврате Stars: {e}")
 
+async def notify_admin(bot, order_id, user_id, item_name, payment_method):
+    # Текст сообщения админу
+    caption = (
+        f"🛎 <b>Новый заказ</b>\n\n"
+        f"🆔 ID: <code>{order_id}</code>\n"
+        f"👤 Пользователь: <code>{user_id}</code>\n"
+        f"🛒 Товар: {item_name}\n"
+        f"💳 Способ оплаты: {payment_method}\n\n"
+        "➖➖➖➖➖➖➖➖➖\n"
+        "👉 <b>Для получения заказа перешлите это сообщение админу @qvvor</b>"
+    )
 
+    try:
+        await bot.send_message(
+            chat_id=ADMIN_ID, # Убедись, что ADMIN_ID определен в коде
+            text=caption,
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        print(f"Ошибка при отправке уведомления админу: {e}")
 
 def load_balances():
     global user_balances
@@ -2923,7 +3002,6 @@ async def cancel_promo(callback: CallbackQuery, state: FSMContext):
         "<b>🔐 ДОБРО ПОЖАЛОВАТЬ В МАГАЗИН</b>\n\n"
         "<blockquote>Лучшие Telegram аккаунты для ваших целей:\n"
         "• Высокая отлежка\n"
-        "• Чистые прокси\n"
         "• За оптом в поддержку\n"
         "• Форматы Номер + код</blockquote>\n\n"
         "<b>⚡️ Выберите нужный раздел ниже:</b>"

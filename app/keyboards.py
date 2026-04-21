@@ -40,7 +40,7 @@ def settings():
         inline_keyboard=[
             # Используем самолетик, как на твоем скриншоте
             [InlineKeyboardButton(text="✈ Купить аккаунт", callback_data="buyacc")],
-            [InlineKeyboardButton(text="◷ Аккаунты с отлегой", callback_data="aging_menu")],
+            [InlineKeyboardButton(text="▤ Другие товары", callback_data="other_items")],
             [
                 InlineKeyboardButton(text="☺︎ Профиль", callback_data="profile"),
                 InlineKeyboardButton(text="☷ История", callback_data="purchase_history")
