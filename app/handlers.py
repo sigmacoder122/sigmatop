@@ -233,7 +233,14 @@ import logging
 from aiogram import F
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
-
+def get_payment_kb(order_id):
+    kb = InlineKeyboardBuilder()
+    # Важно: callback_data должна начинаться так, как ловят её хендлеры оплаты
+    kb.row(InlineKeyboardButton(text="💳 Карта (Cactus)", callback_data=f"pay_other_cactus_{order_id}"))
+    kb.row(InlineKeyboardButton(text="💳 СБП (Platega)", callback_data=f"pay_other_platega_{order_id}"))
+    kb.row(InlineKeyboardButton(text="◈ Crypto Bot", callback_data=f"pay_other_crypto_{order_id}"))
+    kb.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_payment"))
+    return kb.as_markup()
 @router.callback_query(F.data == "paystars_crypto")
 async def pay_stars_with_crypto(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -2778,6 +2785,87 @@ async def create_platega_invoice_async(amount: float, item_id: str, user_id: int
         return None, None
 
 
+# --- ОПЛАТА ЧЕРЕЗ CACTUS (Карта) ---
+@router.callback_query(F.data.startswith("pay_other_cactus_"))
+async def other_cactus_pay(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    price = data.get('price')
+    item_name = data.get('item_name')
+
+    if not order_id:
+        return await callback.answer("Ошибка: заказ не найден в системе", show_alert=True)
+
+    # Сохраняем в глобальный словарь orders (как ты делал раньше)
+    orders[order_id] = {
+        "item_name": item_name,
+        "user_id": callback.from_user.id,
+        "method": "CactusPay (Карта)",
+        "status": "pending"
+    }
+
+    payload = {
+        "token": CACTUS_TOKEN,
+        "order_id": order_id,
+        "amount": float(price),
+        "description": f"Оплата: {item_name}"
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(CACTUS_API_CREATE, json=payload) as resp:
+            res = await resp.json()
+            if res.get("status") == "success":
+                url = res["response"]["url"]
+                kb = InlineKeyboardBuilder()
+                kb.row(InlineKeyboardButton(text="🔗 Перейти к оплате (50₽)", url=url))
+                kb.row(InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_other_cactus_{order_id}"))
+
+                await callback.message.edit_caption(
+                    caption=f"<b>💳 Оплата заказа #{order_id}</b>\n\nТовар: {item_name}\nСумма: {price}₽\n\n<i>Нажмите кнопку ниже для перехода к оплате:</i>",
+                    reply_markup=kb.as_markup(),
+                    parse_mode="HTML"
+                )
+            else:
+                await callback.answer("❌ Ошибка платежного шлюза 1", show_alert=True)
+
+
+# --- ОПЛАТА ЧЕРЕЗ PLATEGA (СБП) ---
+@router.callback_query(F.data.startswith("pay_other_platega_"))
+async def other_platega_pay(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    price = data.get('price')
+    item_name = data.get('item_name')
+
+    # Генерируем ссылку через твою функцию API Platega
+    payment_url, tx_id = await create_platega_invoice_async(
+        amount=price,
+        item_id=order_id,
+        user_id=callback.from_user.id
+    )
+
+    if payment_url:
+        # Важно сохранить tx_id от Плейтеги, чтобы потом проверить статус
+        await state.update_data(tx_id=tx_id)
+
+        orders[order_id] = {
+            "item_name": item_name,
+            "user_id": callback.from_user.id,
+            "method": "Platega (СБП)",
+            "tx_id": tx_id
+        }
+
+        kb = InlineKeyboardBuilder()
+        kb.row(InlineKeyboardButton(text="🔗 Оплатить через СБП", url=payment_url))
+        kb.row(InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_other_platega_{order_id}"))
+
+        await callback.message.edit_caption(
+            caption=f"<b>🚀 Оплата через СБП</b>\n\nТовар: {item_name}\nСумма: {price}₽",
+            reply_markup=kb.as_markup(),
+            parse_mode="HTML"
+        )
+    else:
+        await callback.answer("❌ Ошибка шлюза СБП", show_alert=True)
 async def check_platega_status_async(tx_id: str):
     url = f"{PLATEGA_API_BASE}/transaction/{tx_id}"
     headers = {"X-MerchantId": MERCHANT_ID, "X-Secret": API_SECRET}
