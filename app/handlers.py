@@ -2951,13 +2951,134 @@ async def notify_admin(bot, order_id, user_id, item_name, payment_method):
 
     try:
         await bot.send_message(
-            chat_id=ADMIN_ID, # Убедись, что ADMIN_ID определен в коде
+            chat_id=user_id, # Убедись, что ADMIN_ID определен в коде
             text=caption,
             parse_mode="HTML"
         )
     except Exception as e:
         print(f"Ошибка при отправке уведомления админу: {e}")
 
+
+# Хендлер для Мануала и Разморозки (у них цена фикс - 50р)
+@router.callback_query(F.data.in_(["buy_unfreeze", "buy_manual"]))
+async def select_other_item(callback: CallbackQuery, state: FSMContext):
+    item_name = "Текст для разморозки" if callback.data == "buy_unfreeze" else "Мануал «Антибан»"
+    price = 50.0
+    order_id = str(uuid.uuid4())[:8].upper()
+
+    await state.update_data(item_name=item_name, price=price, order_id=order_id)
+
+    await callback.message.edit_caption(
+        caption=f"<b>🛒 Оформление заказа</b>\n\n<b>Товар:</b> {item_name}\n<b>К оплате:</b> {price}₽\n\nВыберите способ оплаты:",
+        reply_markup=get_payment_kb(order_id),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data.startswith("pay_other_cactus_"))
+async def other_cactus_pay(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    order_id = data['order_id']
+
+    # Создаем заказ в твоем словаре
+    orders[order_id] = {
+        "item_name": data['item_name'],
+        "user_id": callback.from_user.id,
+        "method": "CactusPay (Карта)"
+    }
+
+    # Вызов твоего API CactusPay
+    payload = {"token": CACTUS_TOKEN, "order_id": order_id, "amount": data['price'], "description": data['item_name']}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(CACTUS_API_CREATE, json=payload) as resp:
+            res = await resp.json()
+            if res.get("status") == "success":
+                url = res["response"]["url"]
+                kb = InlineKeyboardBuilder()
+                kb.row(InlineKeyboardButton(text="🔗 Перейти к оплате", url=url))
+                kb.row(InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_other_cactus_{order_id}"))
+                await callback.message.edit_caption(caption="Оплатите по ссылке ниже:", reply_markup=kb.as_markup())
+            else:
+                await callback.answer("Ошибка шлюза 1")
+
+
+@router.callback_query(F.data.startswith("pay_other_crypto_"))
+async def other_crypto_pay(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    order_id = data['order_id']
+    amount_usdt = data['price'] / 68  # Твой курс
+
+    orders[order_id] = {
+        "item_name": data['item_name'],
+        "user_id": callback.from_user.id,
+        "method": "CryptoBot"
+    }
+
+    # Твой код CryptoBot API
+    headers = {"Crypto-Pay-API-Token": "ТВОЙ_ТОКЕН", "Content-Type": "application/json"}
+    payload = {"asset": "USDT", "amount": f"{amount_usdt:.2f}", "payload": order_id}
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post("https://pay.crypt.bot/api/createInvoice", headers=headers, json=payload) as resp:
+            res = await resp.json()
+            if res.get("ok"):
+                url = res["result"]["bot_invoice_url"]
+                kb = InlineKeyboardBuilder()
+                kb.row(InlineKeyboardButton(text="💳 Оплатить USDT", url=url))
+                kb.row(InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_other_crypto_{order_id}"))
+                await callback.message.edit_caption(caption=f"Оплата криптой ({amount_usdt:.2f} USDT):",
+                                                    reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data.startswith("check_other_"))
+async def check_other_payment(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split('_')  # check_other_cactus_ID
+    method = parts[2]
+    order_id = parts[3]
+
+    # 1. ТУТ ТВОЯ ПРОВЕРКА (как в коде выше: Cactus API или Crypto API)
+    # Если проверка вернула SUCCESS:
+
+    info = orders.get(order_id)
+    if not info: return await callback.answer("Заказ не найден.")
+
+    # Уведомляем админа
+    await notify_admin(
+        bot=callback.bot,
+        order_id=order_id,
+        user_id=callback.from_user.id,
+        item_name=info['item_name'],
+        payment_method=info['method']
+    )
+
+    # СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЮ
+    await callback.message.edit_caption(
+        caption=(
+            f"✅ <b>ОПЛАТА ПОЛУЧЕНА!</b>\n\n"
+            f"<b>Заказ:</b> #<code>{order_id}</code>\n"
+            f"<b>Товар:</b> {info['item_name']}\n\n"
+            f"📥 <b>Для получения товара напишите администратору: @qvvor</b>\n"
+            f"Просто отправьте ему номер вашего заказа."
+        ),
+        parse_mode="HTML",
+        reply_markup=None  # Убираем кнопки оплаты
+    )
+    await state.clear()
+    await callback.answer("Успешно!", show_alert=True)
+
+# Для Звёзд (после того как пользователь ввёл количество и получил цену)
+# Допустим, в стейте уже лежат 'price' и 'item_name' (Звезды 100шт)
+@router.callback_query(F.data == "pay_stars_menu")
+async def stars_payment_menu(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    order_id = str(uuid.uuid4())[:8].upper()
+    await state.update_data(order_id=order_id)
+
+    await callback.message.edit_caption(
+        caption=f"<b>🛒 Оплата Звёзд</b>\n\n<b>Товар:</b> {data['item_name']}\n<b>К оплате:</b> {data['price']}₽\n\nВыберите способ:",
+        reply_markup=get_payment_kb(order_id),
+        parse_mode="HTML"
+    )
 def load_balances():
     global user_balances
     try:
@@ -2966,7 +3087,22 @@ def load_balances():
     except FileNotFoundError:
         user_balances = {}
 
+from aiogram.fsm.state import StatesGroup, State
+import uuid
 
+class OtherItemsFSM(StatesGroup):
+    item_name = State()
+    price = State()
+    order_id = State()
+
+# Универсальная клавиатура выбора метода оплаты
+def get_payment_kb(order_id):
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="💳 Карта (Cactus)", callback_data=f"pay_other_cactus_{order_id}"))
+    kb.row(InlineKeyboardButton(text="💳 СБП (Platega)", callback_data=f"pay_other_platega_{order_id}"))
+    kb.row(InlineKeyboardButton(text="◈ Crypto Bot", callback_data=f"pay_other_crypto_{order_id}"))
+    kb.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_payment"))
+    return kb.as_markup()
 
 
 
