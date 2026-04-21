@@ -37,6 +37,18 @@ class InfoStates(StatesGroup):
 # Добавляем состояние для капчи
 class CaptchaStates(StatesGroup):
     waiting_captcha = State()
+from aiogram.fsm.state import StatesGroup, State
+
+class AddItemFSM(StatesGroup):
+    name = State()
+    description = State()
+    price = State()
+    category = State()
+    aging_days = State()
+
+class EditPriceFSM(StatesGroup):
+    item_id = State()
+    new_price = State()
 class StarGameStates(StatesGroup):
     selecting_item = State()
     choosing_mode = State()
@@ -50,7 +62,274 @@ class PaymentStates(StatesGroup):
 API_KEY = '774774'  # Ваш ключ от LZT Market
 payments = {}  # Временное хранилище платежей
 
+from aiogram import F, types
+from aiogram.types import CallbackQuery
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+
+# 1. Главное меню "Другие товары"
+@router.callback_query(F.data == "other_items")
+async def show_other_items_menu(callback: CallbackQuery):
+    photo_id = "AgACAgQAAxkBAAImg2nK3MUIn9MgysPDvbHiLdQ4igFNAAJaEWsbW0RRUu6GS18il5PNAQADAgADeQADOgQ"
+
+    text = (
+        "<b>▤ КАТАЛОГ: ДРУГИЕ ТОВАРЫ</b>\n\n"
+        "<blockquote>Здесь собраны полезные материалы и эксклюзивные аккаунты "
+        "для безопасной и долгосрочной работы.</blockquote>\n"
+        "Выберите нужный раздел:"
+    )
+
+    await callback.message.edit_media(
+        media=types.InputMediaPhoto(
+            media=photo_id,
+            caption=text,
+            parse_mode="HTML"
+        ),
+        reply_markup=kb.other_items_kb()
+    )
+    await callback.answer()
+
+
+# 2. Переход в меню "Аккаунты с отлегой"
+@router.callback_query(F.data == "aging_menu")
+async def show_aging_menu(callback: CallbackQuery):
+    photo_id = "AgACAgQAAxkBAAImg2nK3MUIn9MgysPDvbHiLdQ4igFNAAJaEWsbW0RRUu6GS18il5PNAQADAgADeQADOgQ"
+
+    text = (
+        "<b>⌚ КАТАЛОГ: АККАУНТЫ С ОТЛЕГОЙ</b>\n\n"
+        "<blockquote>Чем больше отлега у аккаунта, тем выше его траст "
+        "и устойчивость к блокировкам. Выберите нужный срок:</blockquote>"
+    )
+
+    await callback.message.edit_media(
+        media=types.InputMediaPhoto(
+            media=photo_id,
+            caption=text,
+            parse_mode="HTML"
+        ),
+        reply_markup=kb.aging_categories_kb()
+    )
+    await callback.answer()
+
+
+# 3. Вывод списка товаров конкретной отлеги
+@router.callback_query(F.data.startswith("aging_group_"))
+async def show_aged_items_list(callback: CallbackQuery):
+    days = int(callback.data.split('_')[2])
+    items = await rq.get_items_by_aging(aging_days=days)
+
+    if not items:
+        await callback.answer(f"Аккаунтов с отлегой {days} дней пока нет 😔", show_alert=True)
+        return
+
+    kb_builder = InlineKeyboardBuilder()
+    for item in items:
+        kb_builder.button(text=f"☺︎ {item.name} | {int(item.price)}₽", callback_data=f"ageditem_{item.id}")
+
+    # Возврат в меню выбора дней отлеги
+    kb_builder.button(text="↶ Назад", callback_data="aging_menu")
+    kb_builder.adjust(1)
+
+    photo_id = "AgACAgQAAxkBAAImg2nK3MUIn9MgysPDvbHiLdQ4igFNAAJaEWsbW0RRUu6GS18il5PNAQADAgADeQADOgQ"
+
+    await callback.message.edit_media(
+        media=types.InputMediaPhoto(
+            media=photo_id,
+            caption=(
+                f"<b>📁 КАТЕГОРИЯ: ОТЛЕГА {days} ДНЕЙ</b>\n\n"
+                f"<blockquote>Здесь собраны аккаунты, прошедшие проверку временем.\n"
+                f"<b>Статус:</b> Проверены ✓\n"
+                f"<b>Гарантия:</b> 24 часа 🛡</blockquote>\n"
+                f"Выберите подходящий товар ниже:"
+            ),
+            parse_mode="HTML"
+        ),
+        reply_markup=kb_builder.as_markup()
+    )
+    await callback.answer()
+
+
+import uuid
+from aiogram import F, types
+from aiogram.types import Message, CallbackQuery
+from aiogram.fsm.context import FSMContext
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+
+# --- ШАГ 1: Начало покупки ---
+@router.callback_query(F.data == "buy_tg_stars")
+async def start_buy_stars(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(BuyStarsFSM.quantity)
+
+    # Меняем текущее сообщение
+    msg = await callback.message.edit_caption(
+        caption=(
+            "<b>☆ ПОКУПКА TELEGRAM STARS</b>\n\n"
+            "<blockquote>Курс: 1 звезда = 1.32₽\n"
+            "Оплата доступна картами РФ и через Crypto Bot.</blockquote>\n\n"
+            "✍️ <b>Введите количество звезд, которое хотите купить:</b>"
+        ),
+        parse_mode="HTML",
+        reply_markup=cancel_fsm_kb()
+    )
+
+    # Запоминаем ID этого сообщения бота, чтобы потом его менять
+    await state.update_data(bot_message_id=msg.message_id)
+    await callback.answer()
+
+
+# --- ШАГ 2: Ввод количества ---
+@router.message(BuyStarsFSM.quantity)
+async def process_stars_qty(message: Message, state: FSMContext):
+    # Удаляем сообщение пользователя, чтобы не засорять чат
+    await message.delete()
+
+    if not message.text or not message.text.isdigit() or int(message.text) <= 0:
+        return  # Игнорируем, если ввели не число
+
+    qty = int(message.text)
+    await state.update_data(quantity=qty)
+
+    data = await state.get_data()
+    bot_msg_id = data['bot_message_id']
+
+    await state.set_state(BuyStarsFSM.recipient)
+
+    # Редактируем сообщение бота
+    await message.bot.edit_message_caption(
+        chat_id=message.chat.id,
+        message_id=bot_msg_id,
+        caption=(
+            f"<b>☆ ПОКУПКА TELEGRAM STARS</b>\n\n"
+            f"<blockquote>Вы выбрали: {qty} ☆\n"
+            f"К оплате: {qty * 1.32:.2f}₽</blockquote>\n\n"
+            f"✍️ <b>Отправьте @username получателя или ссылку на профиль:</b>"
+        ),
+        parse_mode="HTML",
+        reply_markup=cancel_fsm_kb()
+    )
+
+
+# --- ШАГ 3: Ввод получателя и выбор оплаты ---
+@router.message(BuyStarsFSM.recipient)
+async def process_stars_recipient(message: Message, state: FSMContext):
+    await message.delete()  # Удаляем текст пользователя
+
+    recipient = message.text
+    data = await state.get_data()
+    qty = data['quantity']
+    bot_msg_id = data['bot_message_id']
+    price = qty * 1.32
+
+    await state.update_data(recipient=recipient, price=price)
+
+    # Клавиатура с методами оплаты
+    kb_builder = InlineKeyboardBuilder()
+    kb_builder.button(text="⎚ Банковская карта РФ", callback_data="paystars_card")
+    kb_builder.button(text="◈ Crypto Bot", callback_data="paystars_crypto")
+    kb_builder.button(text="↶ Отмена", callback_data="cancel_stars_fsm")
+    kb_builder.adjust(1)
+
+    await message.bot.edit_message_caption(
+        chat_id=message.chat.id,
+        message_id=bot_msg_id,
+        caption=(
+            f"<b>🛒 ОФОРМЛЕНИЕ ЗАКАЗА</b>\n\n"
+            f"<b>Товар:</b> Telegram Stars ☆\n"
+            f"<b>Количество:</b> {qty} шт.\n"
+            f"<b>Получатель:</b> <code>{recipient}</code>\n"
+            f"<b>К оплате:</b> {price:.2f}₽\n\n"
+            f"<blockquote>Выберите удобный способ оплаты:</blockquote>"
+        ),
+        parse_mode="HTML",
+        reply_markup=kb_builder.as_markup()
+    )
+
+
+# Пример для кнопки проверки оплаты или вебхука
+@router.callback_query(F.data.in_(["paystars_card", "paystars_crypto"]))
+async def process_stars_payment(callback: CallbackQuery, state: FSMContext):
+    # Здесь логика выдачи ссылки на оплату...
+    # Допустим, оплата прошла успешно:
+
+    data = await state.get_data()
+    qty = data.get('quantity')
+    recipient = data.get('recipient')
+    payment_method = "Карта РФ ⎚" if callback.data == "paystars_card" else "Crypto Bot ◈"
+
+    order_id = str(uuid.uuid4())[:8].upper()
+    item_name = f"Telegram Stars ☆ ({qty} шт. для {recipient})"
+
+    # Уведомляем админа твоей функцией
+    await notify_admin(
+        bot=callback.bot,
+        order_id=order_id,
+        user_id=callback.from_user.id,
+        item_name=item_name,
+        payment_method=payment_method
+    )
+
+    await callback.message.edit_caption(
+        caption=(
+            f"✅ <b>Оплата прошла успешно!</b>\n\n"
+            f"Ваш номер заказа: <code>{order_id}</code>\n"
+            f"Администратор уже уведомлен. Ожидайте начисления звезд на аккаунт {recipient}."
+        ),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⌂ В главное меню", callback_data="main")]
+        ])
+    )
+
+    await state.clear()
+    await callback.answer()
+# --- ОТМЕНА ПОКУПКИ ---
+@router.callback_query(F.data == "cancel_stars_fsm")
+async def cancel_stars_purchase(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    # Возвращаем пользователя в меню "Другие товары"
+    await show_other_items_menu(callback)  # Вызываем функцию, которую мы писали в прошлом ответе
+# 4. Обработчик нажатия на спец. товары (Мануал и Текст)
+@router.callback_query(F.data.startswith("buy_special_"))
+async def process_special_items(callback: CallbackQuery):
+    item_type = callback.data.split('_')[2]  # Получаем 'unfreeze' или 'manual'
+
+    if item_type == "unfreeze":
+        item_name = "Текст для разморозки"
+        desc = "Проверенный шаблон текста для общения с техподдержкой, повышающий шанс разбана."
+    else:
+        item_name = "Мануал «Антибан»"
+        desc = "Подробная инструкция: как правильно заходить на аккаунты, какие прокси использовать и как избежать заморозки."
+
+    price = 50
+    photo_id = "AgACAgQAAxkBAAImg2nK3MUIn9MgysPDvbHiLdQ4igFNAAJaEWsbW0RRUu6GS18il5PNAQADAgADeQADOgQ"
+
+    text = (
+        f"<b>🛒 ПОКУПКА: {item_name.upper()}</b>\n\n"
+        f"<blockquote>{desc}</blockquote>\n"
+        f"<b>Стоимость:</b> {price}₽\n\n"
+        f"Выберите способ оплаты:"
+    )
+
+    # Здесь нужно вызвать твою клавиатуру с методами оплаты.
+    # Так как эти товары не из БД, можешь передать фиктивный item_id (например, "special_unfreeze")
+    # Пример вызова твоей клавиатуры: reply_markup=await kb.payment_methods(f"special_{item_type}", "other_items")
+
+    # Для заглушки:
+    kb_builder = InlineKeyboardBuilder()
+    kb_builder.button(text="✈ Оплатить 50₽", callback_data=f"pay_special_{item_type}")
+    kb_builder.button(text="↶ Назад", callback_data="other_items")
+    kb_builder.adjust(1)
+
+    await callback.message.edit_media(
+        media=types.InputMediaPhoto(
+            media=photo_id,
+            caption=text,
+            parse_mode="HTML"
+        ),
+        reply_markup=kb_builder.as_markup()
+    )
+    await callback.answer()
 
 @router.callback_query(F.data == "cancel_payment")
 async def cancel_payment(callback: CallbackQuery, state: FSMContext):
@@ -709,7 +988,48 @@ async def pay_with_stars(callback: CallbackQuery, state: FSMContext):
         await callback.answer("⚠️ Ошибка при создании платежа")
 
 
+import uuid
+from aiogram.types import Message, ContentType
+from app.keyboards import main_menu_kb  # импортируй свою кнопку меню
 
+
+@router.message(F.successful_payment)
+async def process_successful_payment(message: Message, bot: Bot):
+    payment_info = message.successful_payment
+
+    # Извлекаем данные из payload, который мы задали в инвойсе
+    # payload был: f"stars_{item_id}_{callback.from_user.id}"
+    payload_data = payment_info.invoice_payload.split('_')
+    item_id = payload_data[1]
+    user_id = int(payload_data[2])
+
+    # Генерируем уникальный ID заказа (если у тебя нет своего генератора)
+    order_id = str(uuid.uuid4())[:8].upper()
+
+    # Получаем название товара из базы для админа
+    item = await rq.get_item_by_id(item_id)
+    item_name = item.name if item else "Неизвестный товар"
+
+    # --- ВЫЗОВ ТВОЕЙ ФУНКЦИИ УВЕДОМЛЕНИЯ ---
+    try:
+        await notify_admin(
+            bot=bot,
+            order_id=order_id,
+            user_id=user_id,
+            item_name=item_name,
+            payment_method="Telegram Stars 🌟"
+        )
+    except Exception as e:
+        logging.error(f"Admin notification failed: {e}")
+
+    # Отвечаем пользователю
+    await message.answer(
+        f"✅ **Оплата прошла успешно!**\n\n"
+        f"Ваш номер заказа: `{order_id}`\n"
+        f"Администратор уже уведомлен. Перешлите сообщение с заказом выше админу @qvvor для получения данных.",
+        parse_mode="Markdown",
+        reply_markup=main_menu_kb()
+    )
 
 @router.callback_query(F.data == "purchase_history")
 async def purchase_history(callback: CallbackQuery):
@@ -1444,6 +1764,141 @@ async def check_crypto_payment(callback: CallbackQuery):
         await callback.answer("⚠️ Ошибка проверки")
 
 
+from aiogram import Router, F
+from aiogram.types import Message, CallbackQuery
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+
+
+from app.database.requests import add_item_db, update_item_price_db
+from app.keyboards import admin_kb, cancel_admin_kb
+
+admin_router = Router()
+
+# ❗️ ЗАМЕНИ НА СВОЙ ID ИЛИ СПИСОК ID АДМИНОВ
+
+
+
+# --- ГЛАВНОЕ МЕНЮ АДМИНА ---
+
+@admin_router.message(Command("adm"))
+async def admin_panel(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return  # Если не админ, бот просто промолчит
+    await message.answer("🛠 **Панель администратора**", reply_markup=admin_kb(), parse_mode="Markdown")
+
+
+@admin_router.callback_query(F.data == "adm_close")
+async def close_admin_panel(callback: CallbackQuery):
+    await callback.message.delete()
+
+
+@admin_router.callback_query(F.data == "adm_cancel")
+async def cancel_admin_action(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("Действие отменено.", reply_markup=admin_kb())
+
+
+# --- ДОБАВЛЕНИЕ ТОВАРА ---
+
+@admin_router.callback_query(F.data == "adm_add_item")
+async def start_add_item(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AddItemFSM.name)
+    await callback.message.edit_text("Введите **название** нового товара:", parse_mode="Markdown",
+                                     reply_markup=cancel_admin_kb())
+
+
+@admin_router.message(AddItemFSM.name)
+async def add_item_name(message: Message, state: FSMContext):
+    await state.update_data(name=message.text)
+    await state.set_state(AddItemFSM.description)
+    await message.answer("Введите **описание** товара:", parse_mode="Markdown", reply_markup=cancel_admin_kb())
+
+
+@admin_router.message(AddItemFSM.description)
+async def add_item_desc(message: Message, state: FSMContext):
+    await state.update_data(description=message.text)
+    await state.set_state(AddItemFSM.price)
+    await message.answer("Введите **цену** (только число, например 150):", parse_mode="Markdown",
+                         reply_markup=cancel_admin_kb())
+
+
+@admin_router.message(AddItemFSM.price)
+async def add_item_price(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        return await message.answer("⚠️ Пожалуйста, введите корректное число.")
+
+    await state.update_data(price=float(message.text))
+    await state.set_state(AddItemFSM.category)
+    await message.answer("Введите **ID категории** (число):", parse_mode="Markdown", reply_markup=cancel_admin_kb())
+
+
+@admin_router.message(AddItemFSM.category)
+async def add_item_category(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        return await message.answer("⚠️ ID категории должно быть числом.")
+
+    await state.update_data(category=int(message.text))
+    await state.set_state(AddItemFSM.aging_days)
+    await message.answer("Введите **дни отлеги** (если нет, напишите 0):", parse_mode="Markdown",
+                         reply_markup=cancel_admin_kb())
+
+
+@admin_router.message(AddItemFSM.aging_days)
+async def add_item_aging(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        return await message.answer("⚠️ Дни отлеги должны быть числом.")
+
+    data = await state.get_data()
+
+    # Сохраняем в БД
+    await add_item_db(
+        name=data['name'],
+        description=data['description'],
+        price=data['price'],
+        category=data['category'],
+        aging_days=int(message.text)
+    )
+
+    await state.clear()
+    await message.answer(f"✅ Товар **{data['name']}** успешно добавлен в базу!", parse_mode="Markdown",
+                         reply_markup=admin_kb())
+
+
+# --- ИЗМЕНЕНИЕ ЦЕНЫ ---
+
+@admin_router.callback_query(F.data == "adm_edit_price")
+async def start_edit_price(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EditPriceFSM.item_id)
+    await callback.message.edit_text("Введите **ID товара**, цену которого хотите изменить:", parse_mode="Markdown",
+                                     reply_markup=cancel_admin_kb())
+
+
+@admin_router.message(EditPriceFSM.item_id)
+async def edit_price_id(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        return await message.answer("⚠️ ID товара должно быть числом.")
+
+    await state.update_data(item_id=int(message.text))
+    await state.set_state(EditPriceFSM.new_price)
+    await message.answer("Введите **новую цену**:", parse_mode="Markdown", reply_markup=cancel_admin_kb())
+
+
+@admin_router.message(EditPriceFSM.new_price)
+async def edit_price_value(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        return await message.answer("⚠️ Цена должна быть числом.")
+
+    data = await state.get_data()
+    item_id = data['item_id']
+    new_price = float(message.text)
+
+    # Обновляем в БД
+    await update_item_price_db(item_id, new_price)
+
+    await state.clear()
+    await message.answer(f"✅ Цена товара (ID: {item_id}) успешно изменена на **{new_price}₽**", parse_mode="Markdown",
+                         reply_markup=admin_kb())
 # Обработчик кнопки "Инфо"
 @router.callback_query(F.data == "info")
 async def info_callback(callback: CallbackQuery):
@@ -1645,25 +2100,73 @@ async def show_aging_menu(callback: CallbackQuery):
 
 
 # 2. Вывод списка товаров конкретной отлеги (например, 30 дней)
+from aiogram import F, types
+from aiogram.types import CallbackQuery
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+
+# 1. Главное меню "Другие товары"
+@router.callback_query(F.data == "other_items")
+async def show_other_items_menu(callback: CallbackQuery):
+    photo_id = "AgACAgQAAxkBAAImg2nK3MUIn9MgysPDvbHiLdQ4igFNAAJaEWsbW0RRUu6GS18il5PNAQADAgADeQADOgQ"
+
+    text = (
+        "<b>▤ КАТАЛОГ: ДРУГИЕ ТОВАРЫ</b>\n\n"
+        "<blockquote>Здесь собраны полезные материалы и эксклюзивные аккаунты "
+        "для безопасной и долгосрочной работы.</blockquote>\n"
+        "Выберите нужный раздел:"
+    )
+
+    await callback.message.edit_media(
+        media=types.InputMediaPhoto(
+            media=photo_id,
+            caption=text,
+            parse_mode="HTML"
+        ),
+        reply_markup=kb.other_items_kb()
+    )
+    await callback.answer()
+
+
+# 2. Переход в меню "Аккаунты с отлегой"
+@router.callback_query(F.data == "aging_menu")
+async def show_aging_menu(callback: CallbackQuery):
+    photo_id = "AgACAgQAAxkBAAImg2nK3MUIn9MgysPDvbHiLdQ4igFNAAJaEWsbW0RRUu6GS18il5PNAQADAgADeQADOgQ"
+
+    text = (
+        "<b>⌚ КАТАЛОГ: АККАУНТЫ С ОТЛЕГОЙ</b>\n\n"
+        "<blockquote>Чем больше отлега у аккаунта, тем выше его траст "
+        "и устойчивость к блокировкам. Выберите нужный срок:</blockquote>"
+    )
+
+    await callback.message.edit_media(
+        media=types.InputMediaPhoto(
+            media=photo_id,
+            caption=text,
+            parse_mode="HTML"
+        ),
+        reply_markup=kb.aging_categories_kb()
+    )
+    await callback.answer()
+
+
+# 3. Вывод списка товаров конкретной отлеги
 @router.callback_query(F.data.startswith("aging_group_"))
 async def show_aged_items_list(callback: CallbackQuery):
-    # Достаем количество дней из кнопки
     days = int(callback.data.split('_')[2])
-
-    # Ищем товары в БД
     items = await rq.get_items_by_aging(aging_days=days)
 
     if not items:
         await callback.answer(f"Аккаунтов с отлегой {days} дней пока нет 😔", show_alert=True)
         return
 
-    # Собираем кнопки с товарами
     kb_builder = InlineKeyboardBuilder()
     for item in items:
-        kb_builder.button(text=f"{item.name} | {int(item.price)}₽", callback_data=f"ageditem_{item.id}")
+        kb_builder.button(text=f"☺︎ {item.name} | {int(item.price)}₽", callback_data=f"ageditem_{item.id}")
 
-    kb_builder.button(text="🔙 Назад", callback_data="aging_menu")
-    kb_builder.adjust(1)  # В один столбик
+    # Возврат в меню выбора дней отлеги
+    kb_builder.button(text="↶ Назад", callback_data="aging_menu")
+    kb_builder.adjust(1)
 
     photo_id = "AgACAgQAAxkBAAImg2nK3MUIn9MgysPDvbHiLdQ4igFNAAJaEWsbW0RRUu6GS18il5PNAQADAgADeQADOgQ"
 
@@ -1673,10 +2176,53 @@ async def show_aged_items_list(callback: CallbackQuery):
             caption=(
                 f"<b>📁 КАТЕГОРИЯ: ОТЛЕГА {days} ДНЕЙ</b>\n\n"
                 f"<blockquote>Здесь собраны аккаунты, прошедшие проверку временем.\n"
-                f"<b>Статус:</b> Проверены ✅\n"
+                f"<b>Статус:</b> Проверены ✓\n"
                 f"<b>Гарантия:</b> 24 часа 🛡</blockquote>\n"
                 f"Выберите подходящий товар ниже:"
             ),
+            parse_mode="HTML"
+        ),
+        reply_markup=kb_builder.as_markup()
+    )
+    await callback.answer()
+
+
+# 4. Обработчик нажатия на спец. товары (Мануал и Текст)
+@router.callback_query(F.data.startswith("buy_special_"))
+async def process_special_items(callback: CallbackQuery):
+    item_type = callback.data.split('_')[2]  # Получаем 'unfreeze' или 'manual'
+
+    if item_type == "unfreeze":
+        item_name = "Текст для разморозки"
+        desc = "Проверенный шаблон текста для общения с техподдержкой, повышающий шанс разбана."
+    else:
+        item_name = "Мануал «Антибан»"
+        desc = "Подробная инструкция: как правильно заходить на аккаунты, какие прокси использовать и как избежать заморозки."
+
+    price = 50
+    photo_id = "AgACAgQAAxkBAAImg2nK3MUIn9MgysPDvbHiLdQ4igFNAAJaEWsbW0RRUu6GS18il5PNAQADAgADeQADOgQ"
+
+    text = (
+        f"<b>🛒 ПОКУПКА: {item_name.upper()}</b>\n\n"
+        f"<blockquote>{desc}</blockquote>\n"
+        f"<b>Стоимость:</b> {price}₽\n\n"
+        f"Выберите способ оплаты:"
+    )
+
+    # Здесь нужно вызвать твою клавиатуру с методами оплаты.
+    # Так как эти товары не из БД, можешь передать фиктивный item_id (например, "special_unfreeze")
+    # Пример вызова твоей клавиатуры: reply_markup=await kb.payment_methods(f"special_{item_type}", "other_items")
+
+    # Для заглушки:
+    kb_builder = InlineKeyboardBuilder()
+    kb_builder.button(text="✈ Оплатить 50₽", callback_data=f"pay_special_{item_type}")
+    kb_builder.button(text="↶ Назад", callback_data="other_items")
+    kb_builder.adjust(1)
+
+    await callback.message.edit_media(
+        media=types.InputMediaPhoto(
+            media=photo_id,
+            caption=text,
             parse_mode="HTML"
         ),
         reply_markup=kb_builder.as_markup()
@@ -2097,26 +2643,36 @@ ADMIN_ID = 7658738825
 
 async def notify_admin(
         bot: Bot,
-        order_id: str,  # Изменено на строковый тип
+        order_id: str,
         user_id: int,
         item_name: str,
         payment_method: str
 ):
-    message = await bot.send_message(
-        ADMIN_ID,
-        f"🛎 Новый заказ\n"
-        f"ID: `{order_id}`\n"  # Добавляем ID в markdown-формате
-        f"👤 Пользователь: {user_id}\n"
+    # Формируем текст сообщения согласно твоему запросу
+    caption = (
+        f"🛎 **Новый заказ**\n\n"
+        f"🆔 ID: `{order_id}`\n"
+        f"👤 Пользователь: `{user_id}`\n"
         f"🛒 Товар: {item_name}\n"
         f"💳 Способ оплаты: {payment_method}\n\n"
         "➖➖➖➖➖➖➖➖➖\n"
-        "📨 Для отправки данных ответьте на это сообщение",
+        "👉 **Для получения заказа перешлите это сообщение админу @qvvor**"
+    )
+
+    message = await bot.send_message(
+        ADMIN_ID,
+        caption,
         parse_mode="Markdown"
     )
 
-    # Сохраняем ID сообщения с заказом
-    orders[order_id]["admin_message_id"] = message.message_id
-    save_orders()
+    # Сохраняем ID сообщения в базу заказов
+    if order_id in orders:
+        orders[order_id]["admin_message_id"] = message.message_id
+        save_orders()
+    else:
+        # На случай, если заказ еще не создан в словаре
+        orders[order_id] = {"admin_message_id": message.message_id}
+        save_orders()
 from aiogram.filters import CommandObject
 
 user_balances = {}  # словарь: user_id -> баланс stars

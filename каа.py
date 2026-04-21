@@ -1,16 +1,19 @@
-import sqlite3
+n, k = map(int, input().split())
+a = list(map(int, input().split()))
+q = list(map(int, input().split()))
 
-# Подключаемся к твоей базе данных
-# Убедись, что название файла совпадает с твоим (обычно db.sqlite3)
-conn = sqlite3.connect('db.sqlite3')
-cursor = conn.cursor()
+def lefts(a, x):
+    left = 0
+    right = len(a) - 1
+    while left <= right:
+        mid = (left + right)//2
 
-try:
-    # Добавляем новую колонку aging_days типа INTEGER со значением по умолчанию 0
-    cursor.execute("ALTER TABLE items ADD COLUMN aging_days INTEGER DEFAULT 0;")
-    conn.commit()
-    print("✅ Колонка aging_days успешно добавлена! Данные сохранены.")
-except sqlite3.OperationalError as e:
-    print(f"⚠️ Ошибка (возможно, колонка уже существует): {e}")
-finally:
-    conn.close()
+        if x < a[mid]:
+            right = mid - 1
+        else:
+            left = mid + 1
+    return left
+
+for i in q:
+    print(lefts(a, i))
+
