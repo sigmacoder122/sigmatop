@@ -2639,6 +2639,64 @@ async def pay_with_platega(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("⚠️ Произошла непредвиденная ошибка при создании платежа.")
 
 
+# Для Разморозки и Мануала
+@router.callback_query(F.data.startswith("buy_special_"))
+async def start_special_buy(callback: CallbackQuery, state: FSMContext):
+    item_type = callback.data.split('_')[2]
+
+    names = {"unfreeze": "Текст для разморозки", "manual": "Мануал «Антибан»"}
+    item_name = names.get(item_type, "Товар")
+    price = 50.0
+
+    await state.update_data(item_name=item_name, price=price)
+
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="💳 Карта РФ ", callback_data="pay_other_cactus"))
+    kb.row(InlineKeyboardButton(text="💳 СБП", callback_data="pay_other_platega"))
+    kb.row(InlineKeyboardButton(text="◈ Crypto Bot", callback_data="pay_other_crypto"))
+    kb.row(InlineKeyboardButton(text="↶ Отмена", callback_data="cancel_payment"))
+
+    await callback.message.edit_caption(
+        caption=f"<b>🛒 ОФОРМЛЕНИЕ: {item_name}</b>\n\nК оплате: <b>{price}₽</b>\nВыберите способ:",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML"
+    )
+
+
+# --- ОПЛАТА КАРТОЙ (CACTUS) ---
+@router.callback_query(F.data == "pay_other_cactus")
+async def pay_other_cactus(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    order_id = str(uuid.uuid4())[:8].upper()
+    price = data['price']
+    item_name = data.get('item_name', "Товар")
+
+    # Регистрация в твоем словаре
+    orders[order_id] = {"item_name": item_name, "user_id": callback.from_user.id, "method": "Карта"}
+
+    # Тут твой код вызова CACTUS_API_CREATE... (как в твоем примере)
+    # После получения payment_url:
+    kb = InlineKeyboardBuilder()
+    kb.add(InlineKeyboardButton(text="💳 Оплатить", url="ССЫЛКА_ИЗ_API"))
+    kb.row(InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_cactus_{order_id}"))
+
+    await callback.message.edit_caption(caption=f"Оплата: {item_name}\nСумма: {price}₽", reply_markup=kb.as_markup())
+
+
+# --- ОПЛАТА КРИПТОЙ ---
+@router.callback_query(F.data == "pay_other_crypto")
+async def pay_other_crypto(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    order_id = str(uuid.uuid4())[:8].upper()
+    price_rub = data['price']
+    item_name = data['item_name']
+
+    orders[order_id] = {"item_name": item_name, "user_id": callback.from_user.id, "method": "Crypto"}
+
+    # Твой код с requests.post("https://pay.crypt.bot/api/createInvoice")...
+    # Используй сумму: price_rub / 68
+    # В конце выводи кнопку "Проверить" с callback_data=f"check_crypto_{order_id}"
+
 @router.callback_query(F.data == "check_platega_payment")
 async def check_platega_payment(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
