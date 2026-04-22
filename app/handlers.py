@@ -2295,36 +2295,48 @@ async def show_aged_items_list(callback: CallbackQuery):
 
 
 # 4. Обработчик нажатия на спец. товары (Мануал и Текст)
+from aiogram import F, types
+from aiogram.types import CallbackQuery
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
 @router.callback_query(F.data.startswith("buy_special_"))
 async def process_special_items(callback: CallbackQuery):
     item_type = callback.data.split('_')[2]  # Получаем 'unfreeze' или 'manual'
 
+    # Устанавливаем текст, название и ссылку в зависимости от типа
     if item_type == "unfreeze":
         item_name = "Текст для разморозки"
         desc = "Проверенный шаблон текста для общения с техподдержкой, повышающий шанс разбана."
+        payment_url = "https://t.me/send?start=IVpyVXRIs38G"
     else:
         item_name = "Мануал «Антибан»"
-        desc = "Подробная инструкция: как правильно заходить на аккаунты, какие прокси использовать и как избежать заморозки."
+        desc = (
+            "Что делать если мои аккаунты замораживают или дают спам бан через один день?\n\n"
+            "Я написал свой мануал, где описал как максимально выжать все из аккаунта, "
+            "и о том как разморозить свой. <b>0.5$</b> дадут возможность воскресить свой аккаунт "
+            "(доказательство на фото).\n\n"
+            "<i>💡 Также вы сможете перепродавать это и зарабатывать!</i>"
+        )
+        payment_url = "https://t.me/send?start=IVuetOLr9GLY"
 
     price = 50
     photo_id = "AgACAgQAAxkBAAImg2nK3MUIn9MgysPDvbHiLdQ4igFNAAJaEWsbW0RRUu6GS18il5PNAQADAgADeQADOgQ"
 
+    # Оформляем итоговое сообщение
     text = (
         f"<b>🛒 ПОКУПКА: {item_name.upper()}</b>\n\n"
         f"<blockquote>{desc}</blockquote>\n"
-        f"<b>Стоимость:</b> {price}₽\n\n"
-        f"Выберите способ оплаты:"
+        f"<b>💰 Стоимость:</b> {price}₽\n"
+        "➖➖➖➖➖➖➖➖➖➖➖➖➖\n"
+        "👇 <i>Нажмите на кнопку ниже для перехода к оплате:</i>"
     )
 
-    # Здесь нужно вызвать твою клавиатуру с методами оплаты.
-    # Так как эти товары не из БД, можешь передать фиктивный item_id (например, "special_unfreeze")
-    # Пример вызова твоей клавиатуры: reply_markup=await kb.payment_methods(f"special_{item_type}", "other_items")
-
-    # Для заглушки:
+    # Строим клавиатуру
     kb_builder = InlineKeyboardBuilder()
-    kb_builder.button(text="✈ Оплатить 50₽", callback_data=f"pay_special_{item_type}")
+    # Теперь кнопка содержит url, а не callback_data
+    kb_builder.button(text="✈️ Оплатить", url=payment_url)
     kb_builder.button(text="↶ Назад", callback_data="other_items")
-    kb_builder.adjust(1)
+    kb_builder.adjust(1)  # Кнопки будут друг под другом
 
     await callback.message.edit_media(
         media=types.InputMediaPhoto(
