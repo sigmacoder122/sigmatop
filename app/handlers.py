@@ -1733,7 +1733,7 @@ async def pay_with_crypto(callback: CallbackQuery, state: FSMContext):
             headers=headers,
             json={
                 "asset": "USDT",
-                "amount": f"{item.price//68:.2f}",
+                "amount": f"{(item.price/68)//1:.2f}",
                 "description": f"Order #{order_id}",
                 "payload": order_id,
                 "paid_btn_url": "https://t.me/alfasRobot",
