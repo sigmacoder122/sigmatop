@@ -1718,7 +1718,7 @@ async def pay_with_crypto(callback: CallbackQuery, state: FSMContext):
     item_id = callback.data.split('_')[2]
     item = await rq.get_item_by_id(item_id)
     user_id = callback.from_user.id
-
+    amount_usdt = round(item.price / 68, 2)
     try:
         # Создаем заказ ДО оплаты
         order_id = await create_order(user_id, item.id, "Crypto")
@@ -1733,7 +1733,7 @@ async def pay_with_crypto(callback: CallbackQuery, state: FSMContext):
             headers=headers,
             json={
                 "asset": "USDT",
-                "amount": f"{(item.price/68)//1:.2f}",
+                "amount": f"{(item.price/68):.2f}",
                 "description": f"Order #{order_id}",
                 "payload": order_id,
                 "paid_btn_url": "https://t.me/alfasRobot",
