@@ -32,7 +32,9 @@ PLATEGA_API_URL = 'https://app.platega.io/transaction/process'
 MERCHANT_ID = 'de2ca737-2c78-4f6b-b213-8179c25ea4bf'
 API_SECRET = 'u5jYRfAaWUGs2lxibMm3ostWyAiMFpEgKTGIw7xuA46lATQBEqIw5EUldTiqBg2K23S3gys8dbBlqQzb6YIEzfJ5hgX7oocyNGFI'
 from aiogram.fsm.state import StatesGroup, State
-
+class EditPriceState(StatesGroup):
+    waiting_for_item_id = State()
+    waiting_for_new_price = State()
 class BuyStarsFSM(StatesGroup):
     bot_message_id = State() # Запоминаем ID сообщения бота, чтобы его редактировать
     quantity = State()       # Количество звезд
@@ -341,7 +343,6 @@ async def process_stars_recipient(message: Message, state: FSMContext):
 
     # Клавиатура с методами оплаты
     kb_builder = InlineKeyboardBuilder()
-    kb_builder.button(text="⎚ Банковская карта РФ", callback_data="paystars_card")
     kb_builder.button(text="◈ Crypto Bot", callback_data="paystars_crypto")
     kb_builder.button(text="↶ Отмена", callback_data="cancel_stars_fsm")
     kb_builder.adjust(1)
@@ -433,7 +434,10 @@ async def process_special_items(callback: CallbackQuery):
 
     # Для заглушки:
     kb_builder = InlineKeyboardBuilder()
-    kb_builder.button(text="✈ Оплатить 50₽", callback_data=f"pay_special_{item_type}")
+    kb_builder.button(
+        text="✈ Оплатить 50₽",
+        url="https://t.me/send?start=IVvpO8V5KloB"
+    )
     kb_builder.button(text="↶ Назад", callback_data="other_items")
     kb_builder.adjust(1)
 
@@ -2422,7 +2426,75 @@ CACTUS_API_GET = "https://lk.cactuspay.pro/api/?method=get"
 
 
 # ------------------------------
+# --- ЗАКРЫТИЕ ПАНЕЛИ ---
+@router.callback_query(F.data == "adm_close")
+async def close_admin_panel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()  # Очищаем состояния, если админ передумал
+    await callback.message.delete()
+    await callback.answer("Панель администратора закрыта.")
 
+
+# --- ШАГ 1: Нажатие на кнопку "Изменить цену" ---
+@router.callback_query(F.data == "adm_edit_price")
+async def ask_for_item_id(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID:  # Защита
+        return
+
+    await callback.answer()
+    await callback.message.answer("📝 Введите **ID товара**, цену которого хотите изменить:")
+    await state.set_state(EditPriceState.waiting_for_item_id)
+
+
+# --- ШАГ 2: Получение ID товара ---
+@router.message(EditPriceState.waiting_for_item_id)
+async def process_item_id(message: Message, state: FSMContext):
+    # Проверяем, что ввели число
+    if not message.text.isdigit():
+        return await message.answer("⚠️ ID должен быть числом! Попробуйте еще раз:")
+
+    item_id = int(message.text)
+
+    # Ищем товар в БД
+    item = await get_item_by_id(item_id)
+
+    if not item:
+        return await message.answer("⚠️ Товар с таким ID не найден. Проверьте номер и введите снова:")
+
+    # Запоминаем ID товара в FSM
+    await state.update_data(item_id=item_id)
+
+    await message.answer(
+        f"📦 Выбран товар: **{item.name}**\n"
+        f"Текущая цена: **{item.price}**\n\n"
+        f"💰 Введите новую цену (числом):",
+        parse_mode="Markdown"
+    )
+    # Переходим к ожиданию цены
+    await state.set_state(EditPriceState.waiting_for_new_price)
+
+
+# --- ШАГ 3: Получение новой цены и обновление БД ---
+@router.message(EditPriceState.waiting_for_new_price)
+async def process_new_price(message: Message, state: FSMContext):
+    # Пытаемся перевести текст в число (с точкой)
+    try:
+        new_price = float(message.text.replace(",", "."))
+    except ValueError:
+        return await message.answer("⚠️ Цена должна быть числом (например, 150 или 150.50). Попробуйте снова:")
+
+    # Достаем ID товара из памяти
+    data = await state.get_data()
+    item_id = data.get("item_id")
+
+    # Обновляем цену в БД
+    await update_item_price_db(item_id=item_id, new_price=new_price)
+
+    await message.answer(
+        f"✅ Цена для товара **#{item_id}** успешно изменена на **{new_price}**!",
+        parse_mode="Markdown"
+    )
+    # Очищаем состояние
+    await state.clear()
 
 import uuid
 import aiohttp
@@ -2769,31 +2841,43 @@ async def check_platega_payment(callback: CallbackQuery, state: FSMContext):
     else:
         await callback.answer("⚠️ Ошибка при проверке статуса или сервис временно недоступен.", show_alert=True)
 
+
 async def create_platega_invoice_async(amount: float, item_id: str, user_id: int):
     url = f"{PLATEGA_API_BASE}/transaction/process"
-    headers = {"X-MerchantId": MERCHANT_ID, "X-Secret": API_SECRET, "Content-Type": "application/json"}
+    headers = {
+        "X-MerchantId": MERCHANT_ID,
+        "X-Secret": API_SECRET,
+        "Content-Type": "application/json"
+    }
 
     payload = {
-        "paymentMethod": 2,  # Уточни метод СБП в Platega
+        "paymentMethod": 2,
         "paymentDetails": {
             "amount": float(amount),
             "currency": "RUB"
         },
-        "description": f"Оплата товара #{item_id}",
+        # Обязательно добавляем UserId согласно доке!
+        "description": f"Оплата товара #{item_id}. UserId:{user_id}",
         "payload": f"{user_id}_{item_id}"
     }
 
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=payload) as response:
+                # Читаем тело ответа сразу, чтобы оно было доступно
+                resp_text = await response.text()
+
                 if response.status == 200:
                     data = await response.json()
                     return data.get("redirect"), data.get("transactionId")
                 else:
-                    logging.error(f"Platega create error: {await response.text()}")
+                    # Здесь response существует, ошибки не будет
+                    logging.error(f"Platega error status {response.status}: {resp_text}")
                     return None, None
     except Exception as e:
-        logging.error(f"Platega connection error: {e}")
+        # ВНИМАНИЕ: Здесь нельзя использовать response, его тут нет!
+        # Используем только переменную e
+        logging.error(f"Platega connection error: {str(e)}")
         return None, None
 
 
