@@ -1,0 +1,11 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
+PROXY_URL = os.getenv('PROXY_URL')
+# Добавь это в config.py
+CHANNEL_ID = -1003880311711  # Замени на ID своего канала (узнай в @getmyid_bot)
+
