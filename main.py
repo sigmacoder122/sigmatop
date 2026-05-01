@@ -105,11 +105,9 @@ async def cmd_start(message: types.Message):
             'INSERT OR IGNORE INTO users (user_id, username, joined_date, notifications_enabled) VALUES (?, ?, CURRENT_DATE, 1)',
             (message.from_user.id, message.from_user.username)
         )
-        # Достаем актуальное фото
         async with db.execute('SELECT value FROM settings WHERE key = ?', ('welcome_photo',)) as cursor:
             photo_row = await cursor.fetchone()
             photo_url_or_id = photo_row[0] if photo_row else DEFAULT_PHOTO_URL
-
         await db.commit()
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -117,8 +115,9 @@ async def cmd_start(message: types.Message):
         [InlineKeyboardButton(text="🔔 Настроить уведомления", callback_data="toggle_notifs")]
     ])
 
+    # ИСПРАВЛЕНО: Правильные закрывающиеся теги
     text = (
-        "<b>Привет<b>\n\n"
+        "<b>Привет!</b>\n\n"
         "Добро пожаловать в твой личный трекер привычек. "
         "Здесь мы куем дисциплину и достигаем целей.\n\n"
         "<i>Дисциплина — это решение делать то, чего очень не хочется делать, "
@@ -133,7 +132,6 @@ async def cmd_start(message: types.Message):
         )
     except Exception as e:
         logging.error(f"Ошибка отправки фото: {e}")
-        # Запасной вариант, если фото повреждено или удалено
         await message.answer(text, reply_markup=keyboard)
 
 
