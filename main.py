@@ -15,7 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 # === НАСТРОЙКИ ===
-BOT_TOKEN = "8311389856:AAEbCn9AxcX56LFQg1Fv97l5v_IuvnlbWU0"
+BOT_TOKEN = "8636182382:AAHcbfXhM9sqIgBzRrueZTUjCRcdv46NcXk"
 ADMIN_ID = 7658738825
 
 # Ссылка для поддержания активности бэкенда (Render)
